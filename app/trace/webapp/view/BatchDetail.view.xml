@@ -1,0 +1,262 @@
+<mvc:View
+  controllerName="trace.controller.BatchDetail"
+  xmlns:mvc="sap.ui.core.mvc"
+  xmlns="sap.m"
+  xmlns:layout="sap.ui.layout"
+  xmlns:core="sap.ui.core">
+
+  <Page id="batchDetailPage"
+    title="Batch Detail"
+    showNavButton="true"
+    navButtonPress="onNavBack">
+
+    <headerContent>
+      <Button text="Mint NFT" icon="sap-icon://create-form" type="Emphasized"
+        press="onMint" visible="{= ${status} === 'DRAFT'}"/>
+      <Button text="Transfer" icon="sap-icon://shipping-status"
+        press="onTransfer" visible="{= ${status} === 'MINTED' || ${status} === 'IN_TRANSIT'}"/>
+      <Button text="Confirm Receipt" icon="sap-icon://accept"
+        press="onConfirmReceipt" visible="{= ${status} === 'IN_TRANSIT'}"/>
+      <Button text="Anchor Doc" icon="sap-icon://document"
+        press="onAnchorDoc" visible="{= ${status} !== 'DRAFT' &amp;&amp; ${status} !== 'RECALLED'}"/>
+      <Button text="Cold Chain" icon="sap-icon://temperature"
+        press="onAnchorColdChain" visible="{= ${status} !== 'DRAFT' &amp;&amp; ${status} !== 'RECALLED'}"/>
+      <Button text="Recall" icon="sap-icon://alert" type="Reject"
+        press="onRecall" visible="{= ${status} !== 'DRAFT' &amp;&amp; ${status} !== 'RECALLED'}"/>
+    </headerContent>
+
+    <!-- Recalled Banner -->
+    <MessageStrip
+      text="This batch has been recalled. All supply chain operations are suspended."
+      type="Error"
+      showIcon="true"
+      showCloseButton="false"
+      visible="{= ${status} === 'RECALLED'}"
+      class="sapUiSmallMarginBottom" />
+
+    <!-- Hidden binding to ensure autoExpandSelect includes originPayload -->
+    <core:InvisibleText text="{originPayload}" />
+
+    <ObjectHeader
+      title="{batchNumber}"
+      number="{status}"
+      numberState="{path: 'status', formatter: '.formatStatusState'}"
+      responsive="true">
+      <attributes>
+        <ObjectAttribute title="Product" text="{product}"/>
+        <ObjectAttribute title="Manufacturer" text="{manufacturer/name}"/>
+        <ObjectAttribute title="Current Holder" text="{currentHolder/name}"/>
+      </attributes>
+    </ObjectHeader>
+
+    <!-- Supply Chain Progress Bar -->
+    <HBox justifyContent="SpaceAround" alignItems="Center" class="sapUiMediumMargin"
+      visible="{= ${status} !== 'DRAFT'}">
+
+      <!-- Step 1: Manufactured -->
+      <VBox alignItems="Center">
+        <core:Icon src="sap-icon://factory" size="2rem"
+          color="{path: 'status', formatter: '.formatStep1Color'}" />
+        <Text text="Manufactured" class="sapUiTinyMarginTop" />
+      </VBox>
+
+      <core:Icon src="sap-icon://arrow-right" size="1.2rem"
+        color="{path: 'status', formatter: '.formatStep2Color'}" />
+
+      <!-- Step 2: In Distribution -->
+      <VBox alignItems="Center">
+        <core:Icon src="sap-icon://shipping-status" size="2rem"
+          color="{path: 'status', formatter: '.formatStep2Color'}" />
+        <Text text="In Distribution" class="sapUiTinyMarginTop" />
+      </VBox>
+
+      <core:Icon src="sap-icon://arrow-right" size="1.2rem"
+        color="{path: 'status', formatter: '.formatStep3Color'}" />
+
+      <!-- Step 3: Delivered -->
+      <VBox alignItems="Center">
+        <core:Icon src="sap-icon://accept" size="2rem"
+          color="{path: 'status', formatter: '.formatStep3Color'}" />
+        <Text text="Delivered" class="sapUiTinyMarginTop" />
+      </VBox>
+    </HBox>
+
+    <IconTabBar id="detailTabs" stretchContentHeight="true" expanded="true">
+      <items>
+        <!-- Batch Info Tab -->
+        <IconTabFilter text="Batch Info" icon="sap-icon://product" key="info">
+          <layout:VerticalLayout class="sapUiSmallMargin" width="100%">
+
+            <!-- Editable form for DRAFT batches -->
+            <layout:form.SimpleForm id="batchInfoFormEdit"
+              visible="{= ${status} === 'DRAFT'}"
+              editable="true" layout="ResponsiveGridLayout"
+              labelSpanXL="4" labelSpanL="4" labelSpanM="4"
+              columnsXL="1" columnsL="1" columnsM="1">
+
+              <Label text="Product Name" required="true" />
+              <Input value="{batchInfo>/product}" />
+
+              <Label text="Dosage Form" />
+              <Select selectedKey="{batchInfo>/dosageForm}">
+                <core:Item key="Tablet" text="Tablet" />
+                <core:Item key="Capsule" text="Capsule" />
+                <core:Item key="Liquid" text="Liquid" />
+                <core:Item key="Injection" text="Injection" />
+                <core:Item key="Cream" text="Cream" />
+                <core:Item key="Powder" text="Powder" />
+                <core:Item key="Other" text="Other" />
+              </Select>
+
+              <Label text="Manufacturing Date" required="true" />
+              <DatePicker value="{batchInfo>/mfgDate}" valueFormat="yyyy-MM-dd" displayFormat="dd.MM.yyyy" />
+
+              <Label text="Expiry Date" required="true" />
+              <DatePicker value="{batchInfo>/expDate}" valueFormat="yyyy-MM-dd" displayFormat="dd.MM.yyyy" />
+
+              <Label text="Quantity" required="true" />
+              <Input value="{batchInfo>/quantity}" type="Number" />
+
+              <Label text="Unit" />
+              <Select selectedKey="{batchInfo>/unit}">
+                <core:Item key="pcs" text="pcs" />
+                <core:Item key="kg" text="kg" />
+                <core:Item key="g" text="g" />
+                <core:Item key="liters" text="liters" />
+                <core:Item key="ml" text="ml" />
+              </Select>
+
+              <Label text="Storage Conditions" />
+              <TextArea value="{batchInfo>/storageConditions}" rows="2" />
+            </layout:form.SimpleForm>
+
+            <Toolbar visible="{= ${status} === 'DRAFT'}">
+              <ToolbarSpacer />
+              <Button text="Save Batch Info" icon="sap-icon://save" type="Emphasized"
+                press="onSaveBatchInfo" />
+            </Toolbar>
+
+            <!-- Read-only form for non-DRAFT batches -->
+            <layout:form.SimpleForm id="batchInfoFormReadOnly"
+              visible="{= ${status} !== 'DRAFT'}"
+              editable="false" layout="ResponsiveGridLayout"
+              labelSpanXL="4" labelSpanL="4" labelSpanM="4"
+              columnsXL="1" columnsL="1" columnsM="1">
+
+              <Label text="Product Name" />
+              <Text text="{batchInfo>/product}" />
+
+              <Label text="Dosage Form" />
+              <Text text="{batchInfo>/dosageForm}" />
+
+              <Label text="Manufacturing Date" />
+              <Text text="{batchInfo>/mfgDate}" />
+
+              <Label text="Expiry Date" />
+              <Text text="{batchInfo>/expDate}" />
+
+              <Label text="Quantity" />
+              <Text text="{= ${batchInfo>/quantity} + ' ' + ${batchInfo>/unit}}" />
+
+              <Label text="Storage Conditions" />
+              <Text text="{batchInfo>/storageConditions}" />
+            </layout:form.SimpleForm>
+
+          </layout:VerticalLayout>
+        </IconTabFilter>
+
+        <!-- Events Tab -->
+        <IconTabFilter text="Proof Events" icon="sap-icon://history" count="{= ${proofEvents}.length}" key="events">
+          <Table items="{
+            path: 'proofEvents',
+            parameters: { $orderby: 'createdAt desc' }
+          }">
+            <columns>
+              <Column><Text text="Type"/></Column>
+              <Column><Text text="Status"/></Column>
+              <Column><Text text="Signer"/></Column>
+              <Column><Text text="Tx Hash"/></Column>
+              <Column><Text text="Time"/></Column>
+              <Column><Text text=""/></Column>
+            </columns>
+            <items>
+              <ColumnListItem>
+                <cells>
+                  <Text text="{eventType}"/>
+                  <ObjectStatus text="{status}" state="{path: 'status', formatter: '.formatEventStatus'}"/>
+                  <Text text="{= ${signerVkh} ? ${signerVkh}.substring(0,12) + '...' : ''}"/>
+                  <Link text="{= ${onChainTxHash} ? ${onChainTxHash}.substring(0,16) + '...' : '-'}"
+                    href="{= ${onChainTxHash} ? 'https://preview.cardanoscan.io/transaction/' + ${onChainTxHash} : ''}"
+                    target="_blank"
+                    class="txHashLink"
+                    enabled="{= !!${onChainTxHash}}"/>
+                  <Text text="{
+                    path: 'createdAt',
+                    type: 'sap.ui.model.type.DateTime',
+                    formatOptions: { style: 'short' }
+                  }"/>
+                  <Button text="Retry" icon="sap-icon://refresh" type="Reject"
+                    visible="{= ${status} === 'FAILED'}"
+                    press="onRetry"/>
+                </cells>
+              </ColumnListItem>
+            </items>
+          </Table>
+        </IconTabFilter>
+
+        <!-- On-Chain Asset Tab -->
+        <IconTabFilter text="On-Chain Asset" icon="sap-icon://batch-payments" key="asset">
+          <layout:VerticalLayout class="sapUiSmallMargin" width="100%">
+            <layout:form.SimpleForm editable="false" layout="ResponsiveGridLayout" labelSpanXL="4" labelSpanL="4" labelSpanM="4">
+              <Label text="Policy ID"/>
+              <Text text="{onChainAsset/policyId}"/>
+              <Label text="Asset Name (hex)"/>
+              <Text text="{onChainAsset/assetName}"/>
+              <Label text="Fingerprint"/>
+              <Text text="{onChainAsset/fingerprint}"/>
+              <Label text="Current UTxO"/>
+              <Text text="{onChainAsset/currentUtxoRef}"/>
+              <Label text="Step"/>
+              <Text text="{onChainAsset/step}"/>
+              <Label text="Current Holder (vkh)"/>
+              <Text text="{onChainAsset/currentHolder}"/>
+            </layout:form.SimpleForm>
+          </layout:VerticalLayout>
+        </IconTabFilter>
+
+        <!-- Document Anchors Tab -->
+        <IconTabFilter text="Documents" icon="sap-icon://document-text" key="docs">
+          <Table items="{
+            path: 'documentAnchors',
+            parameters: { $orderby: 'createdAt desc' }
+          }">
+            <columns>
+              <Column><Text text="Type"/></Column>
+              <Column><Text text="Hash"/></Column>
+              <Column><Text text="Visibility"/></Column>
+              <Column><Text text="Status"/></Column>
+              <Column><Text text="Temp Range"/></Column>
+              <Column><Text text="Tx Hash"/></Column>
+            </columns>
+            <items>
+              <ColumnListItem>
+                <cells>
+                  <Text text="{documentType}"/>
+                  <Text text="{= ${documentHash} ? ${documentHash}.substring(0,16) + '...' : ''}"/>
+                  <Text text="{visibility}"/>
+                  <ObjectStatus text="{status}" state="{path: 'status', formatter: '.formatEventStatus'}"/>
+                  <Text text="{= ${minTemp} !== null &amp;&amp; ${minTemp} !== undefined ? ${minTemp} + ' / ' + ${maxTemp} + (${inRange} ? ' OK' : ' BREACH') : '-'}"/>
+                  <Link text="{= ${onChainTxHash} ? ${onChainTxHash}.substring(0,16) + '...' : '-'}"
+                    href="{= ${onChainTxHash} ? 'https://preview.cardanoscan.io/transaction/' + ${onChainTxHash} : ''}"
+                    target="_blank"
+                    class="txHashLink"
+                    enabled="{= !!${onChainTxHash}}"/>
+                </cells>
+              </ColumnListItem>
+            </items>
+          </Table>
+        </IconTabFilter>
+      </items>
+    </IconTabBar>
+  </Page>
+</mvc:View>

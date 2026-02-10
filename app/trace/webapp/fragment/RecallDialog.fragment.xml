@@ -1,0 +1,18 @@
+<core:FragmentDefinition
+  xmlns="sap.m"
+  xmlns:core="sap.ui.core">
+
+  <Dialog id="recallDialog" title="Recall Batch" type="Message" state="Error">
+    <VBox class="sapUiSmallMargin">
+      <MessageStrip text="This action will mark the batch as recalled and create an on-chain proof. This cannot be undone." type="Error" showIcon="true" class="sapUiSmallMarginBottom" />
+      <Label text="Recall Reason" required="true" />
+      <TextArea id="recallReason" rows="3" placeholder="e.g. Quality issue detected in batch testing" width="100%" />
+    </VBox>
+    <beginButton>
+      <Button text="Recall &amp; Sign" type="Reject" press=".onRecallConfirm" />
+    </beginButton>
+    <endButton>
+      <Button text="Cancel" press=".onRecallCancel" />
+    </endButton>
+  </Dialog>
+</core:FragmentDefinition>

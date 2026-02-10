@@ -1,0 +1,3 @@
+ID;batchNumber;product;manufacturer_ID;currentHolder_ID;status;originPayload
+b1b2c3d4-0001-4000-8000-000000000001;BATCH-2024-001;Aspirin 500mg;a1b2c3d4-0001-4000-8000-000000000001;a1b2c3d4-0001-4000-8000-000000000001;DRAFT;{"product":"Aspirin 500mg","batch":"BATCH-2024-001","mfgDate":"2024-01-15","expDate":"2026-01-15","quantity":10000}
+b1b2c3d4-0002-4000-8000-000000000002;BATCH-2024-002;Ibuprofen 400mg;a1b2c3d4-0001-4000-8000-000000000001;a1b2c3d4-0001-4000-8000-000000000001;DRAFT;{"product":"Ibuprofen 400mg","batch":"BATCH-2024-002","mfgDate":"2024-02-01","expDate":"2026-02-01","quantity":5000}

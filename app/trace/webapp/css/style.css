@@ -1,0 +1,19 @@
+.traceShellBar {
+  background-color: var(--sapShellColor, #354a5f);
+}
+.walletChip {
+  margin-right: 0.5rem;
+}
+.verifyTimeline .sapMFeedListItem {
+  border-left: 3px solid var(--sapPositiveColor);
+}
+.verifyTimeline .stepFailed .sapMFeedListItem {
+  border-left-color: var(--sapNegativeColor);
+}
+.verifyTimeline .stepPending .sapMFeedListItem {
+  border-left-color: var(--sapNeutralColor);
+}
+.txHashLink {
+  font-family: monospace;
+  font-size: 0.85rem;
+}

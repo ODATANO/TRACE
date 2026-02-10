@@ -1,0 +1,74 @@
+<mvc:View
+  controllerName="trace.controller.ParticipantDetail"
+  xmlns:mvc="sap.ui.core.mvc"
+  xmlns="sap.m"
+  xmlns:layout="sap.ui.layout"
+  xmlns:core="sap.ui.core">
+
+  <Page id="participantDetailPage"
+    title="Participant Detail"
+    showNavButton="true"
+    navButtonPress="onNavBack">
+
+    <ObjectHeader
+      title="{name}"
+      number="{role}"
+      responsive="true">
+      <attributes>
+        <ObjectAttribute title="Status" text="{= ${isActive} ? 'Active' : 'Inactive'}"/>
+        <ObjectAttribute title="Address" text="{= ${address} ? ${address}.substring(0,24) + '...' : 'Not set'}"/>
+        <ObjectAttribute title="VKH" text="{= ${vkh} ? ${vkh}.substring(0,16) + '...' : 'Not set'}"/>
+      </attributes>
+    </ObjectHeader>
+
+    <Panel headerText="Cardano Identity" class="sapUiSmallMargin">
+      <layout:form.SimpleForm editable="false" layout="ResponsiveGridLayout"
+        labelSpanXL="3" labelSpanL="3" labelSpanM="4">
+        <Label text="Bech32 Address"/>
+        <Text text="{address}" wrapping="true"/>
+        <Label text="Verification Key Hash"/>
+        <Text text="{vkh}"/>
+      </layout:form.SimpleForm>
+    </Panel>
+
+    <Panel headerText="Current Batches" class="sapUiSmallMargin">
+      <Table id="participantBatchesTable"
+        noDataText="This participant does not currently hold any batches."
+        items="{
+          path: '/Batches',
+          parameters: {
+            $expand: 'manufacturer',
+            $orderby: 'modifiedAt desc'
+          }
+        }"
+        mode="SingleSelectMaster"
+        itemPress="onBatchPress">
+
+        <columns>
+          <Column><Text text="Batch Number"/></Column>
+          <Column><Text text="Product"/></Column>
+          <Column><Text text="Status"/></Column>
+          <Column><Text text="Manufacturer"/></Column>
+          <Column><Text text="Modified"/></Column>
+        </columns>
+
+        <items>
+          <ColumnListItem type="Navigation">
+            <cells>
+              <Text text="{batchNumber}"/>
+              <Text text="{product}"/>
+              <ObjectStatus text="{status}" state="{path: 'status', formatter: '.formatStatusState'}"/>
+              <Text text="{manufacturer/name}"/>
+              <Text text="{
+                path: 'modifiedAt',
+                type: 'sap.ui.model.type.DateTime',
+                formatOptions: { style: 'medium' }
+              }"/>
+            </cells>
+          </ColumnListItem>
+        </items>
+      </Table>
+    </Panel>
+
+  </Page>
+</mvc:View>

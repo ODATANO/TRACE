@@ -1,0 +1,62 @@
+<mvc:View
+  controllerName="trace.controller.Verify"
+  xmlns:mvc="sap.ui.core.mvc"
+  xmlns="sap.m"
+  xmlns:layout="sap.ui.layout"
+  xmlns:core="sap.ui.core">
+
+  <Page title="Verify Batch" id="verifyPage">
+    <headerContent>
+      <HBox alignItems="Center">
+        <Input id="verifyInput"
+          placeholder="Batch ID or CIP-14 fingerprint"
+          width="24rem"
+          submit="onVerify"/>
+        <Button text="Verify" icon="sap-icon://accept" type="Emphasized" press="onVerify" class="sapUiTinyMarginBegin"/>
+      </HBox>
+    </headerContent>
+
+    <VBox id="verifyResults" visible="false" class="sapUiSmallMargin">
+
+      <!-- Summary -->
+      <Panel headerText="Verification Summary">
+        <HBox class="sapUiSmallMargin" alignItems="Center">
+          <ObjectStatus id="validityStatus" text="" state="None" class="sapUiMediumMarginEnd"/>
+          <ObjectStatus id="onChainStatus" text="" state="None"/>
+        </HBox>
+        <layout:form.SimpleForm editable="false" layout="ResponsiveGridLayout" labelSpanL="3" labelSpanM="4">
+          <Label text="Fingerprint"/>
+          <Text id="verifyFingerprint"/>
+          <Label text="Current Holder (vkh)"/>
+          <Text id="verifyHolder"/>
+          <Label text="Custody Step"/>
+          <Text id="verifyStep"/>
+        </layout:form.SimpleForm>
+      </Panel>
+
+      <!-- Custody Steps Timeline -->
+      <Panel headerText="Chain of Custody">
+        <List id="stepsTimeline" noDataText="No custody events found."/>
+      </Panel>
+
+      <!-- Document Anchors -->
+      <Panel headerText="Document Anchors" id="docsPanel">
+        <Table id="verifyDocsTable" noDataText="No document anchors found.">
+          <columns>
+            <Column><Text text="Type"/></Column>
+            <Column><Text text="Hash"/></Column>
+            <Column><Text text="Visibility"/></Column>
+            <Column><Text text="Status"/></Column>
+            <Column><Text text="Tx Hash"/></Column>
+          </columns>
+        </Table>
+      </Panel>
+    </VBox>
+
+    <!-- Empty state -->
+    <IllustratedMessage id="emptyState"
+      illustrationType="sapIllus-SearchEarth"
+      title="Verify a Batch"
+      description="Enter a batch ID or CIP-14 fingerprint to verify the chain of custody on Cardano."/>
+  </Page>
+</mvc:View>

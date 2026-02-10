@@ -1,0 +1,37 @@
+<mvc:View
+  controllerName="trace.controller.App"
+  xmlns:mvc="sap.ui.core.mvc"
+  xmlns="sap.m"
+  xmlns:f="sap.f"
+  xmlns:tnt="sap.tnt"
+  height="100%">
+
+  <tnt:ToolPage id="toolPage">
+    <tnt:header>
+      <tnt:ToolHeader>
+        <Button icon="sap-icon://menu2" press="onToggleMenu" type="Transparent"/>
+        <Title text="TRACE" level="H4" class="sapUiSmallMarginBegin"/>
+        <ToolbarSpacer/>
+        <Button id="walletBtn"
+          text="{= ${wallet>/connected} ? ${wallet>/name} : 'Connect Wallet'}"
+          icon="{= ${wallet>/connected} ? 'sap-icon://chain-link' : 'sap-icon://disconnected'}"
+          type="{= ${wallet>/connected} ? 'Success' : 'Default'}"
+          press="onWalletPress"/>
+      </tnt:ToolHeader>
+    </tnt:header>
+
+    <tnt:sideContent>
+      <tnt:SideNavigation id="sideNav" selectedKey="batches" itemSelect="onNavSelect">
+        <tnt:NavigationList>
+          <tnt:NavigationListItem text="Batches" icon="sap-icon://shipping-status" key="batches"/>
+          <tnt:NavigationListItem text="Participants" icon="sap-icon://group" key="participants"/>
+          <tnt:NavigationListItem text="Verify" icon="sap-icon://accept" key="verify"/>
+        </tnt:NavigationList>
+      </tnt:SideNavigation>
+    </tnt:sideContent>
+
+    <tnt:mainContents>
+      <NavContainer id="appNavContainer"/>
+    </tnt:mainContents>
+  </tnt:ToolPage>
+</mvc:View>

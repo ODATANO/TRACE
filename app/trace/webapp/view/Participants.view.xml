@@ -1,0 +1,58 @@
+<mvc:View
+  controllerName="trace.controller.Participants"
+  xmlns:mvc="sap.ui.core.mvc"
+  xmlns="sap.m"
+  xmlns:core="sap.ui.core">
+
+  <Page title="Participants" id="participantsPage">
+    <headerContent>
+      <Button text="Add Participant" icon="sap-icon://add-employee" type="Emphasized" press="onAdd"/>
+      <Button icon="sap-icon://refresh" press="onRefresh" tooltip="Refresh"/>
+    </headerContent>
+
+    <Table id="participantTable"
+      items="{
+        path: '/Participants',
+        parameters: { $orderby: 'name asc' }
+      }"
+      mode="None">
+
+      <columns>
+        <Column><Text text="Name"/></Column>
+        <Column><Text text="Role"/></Column>
+        <Column width="18rem"><Text text="Cardano Address"/></Column>
+        <Column width="14rem"><Text text="VKH"/></Column>
+        <Column width="5rem"><Text text="Active"/></Column>
+        <Column width="4rem"><Text text=""/></Column>
+        <Column width="4rem"><Text text=""/></Column>
+      </columns>
+
+      <items>
+        <ColumnListItem>
+          <cells>
+            <Input value="{name}" change="onFieldChange"/>
+            <Select selectedKey="{role}" change="onFieldChange" forceSelection="false">
+              <core:Item key="Manufacturer" text="Manufacturer"/>
+              <core:Item key="Distributor" text="Distributor"/>
+              <core:Item key="Pharmacy" text="Pharmacy"/>
+              <core:Item key="Regulator" text="Regulator"/>
+            </Select>
+            <Input value="{address}" placeholder="addr_test1..." change="onAddressChange"/>
+            <Input value="{vkh}" editable="false" placeholder="auto-derived from address"/>
+            <Switch state="{isActive}" change="onFieldChange"/>
+            <Button icon="sap-icon://detail-view" type="Transparent" press="onParticipantPress" tooltip="View Details"/>
+            <Button icon="sap-icon://delete" type="Reject" press="onDelete"/>
+          </cells>
+        </ColumnListItem>
+      </items>
+    </Table>
+
+    <footer>
+      <Toolbar>
+        <ToolbarSpacer/>
+        <Button text="Save Changes" type="Emphasized" press="onSave"/>
+        <Button text="Discard" press="onDiscard"/>
+      </Toolbar>
+    </footer>
+  </Page>
+</mvc:View>

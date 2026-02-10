@@ -1,0 +1,60 @@
+<core:FragmentDefinition
+  xmlns="sap.m"
+  xmlns:core="sap.ui.core">
+
+  <Dialog title="Transfer Batch Custody" contentWidth="440px">
+    <VBox class="sapUiSmallMargin">
+
+      <!-- Batch context -->
+      <Panel headerText="Batch">
+        <HBox class="sapUiTinyMargin">
+          <VBox class="sapUiSmallMarginEnd">
+            <Label text="Batch" />
+            <Text text="{transfer>/batchNumber}" />
+          </VBox>
+          <VBox class="sapUiSmallMarginEnd">
+            <Label text="Product" />
+            <Text text="{transfer>/product}" />
+          </VBox>
+          <VBox>
+            <Label text="Current Holder" />
+            <Text text="{transfer>/currentHolder}" />
+          </VBox>
+        </HBox>
+      </Panel>
+
+      <!-- Target participant -->
+      <Label text="Transfer to:" required="true" class="sapUiSmallMarginTop" />
+      <Select id="transferParticipant"
+        items="{transfer>/participants}"
+        forceSelection="false"
+        change=".onTransferParticipantChange">
+        <core:Item key="{transfer>ID}" text="{transfer>name} ({transfer>role})"/>
+      </Select>
+
+      <!-- Recipient address -->
+      <Label text="Recipient Address" class="sapUiSmallMarginTop" />
+      <Text text="{= ${transfer>/recipientAddress} ? ${transfer>/recipientAddress}.substring(0,24) + '...' : 'Select a participant'}" />
+
+      <!-- Transfer reason -->
+      <Label text="Reason" class="sapUiSmallMarginTop" />
+      <Select id="transferReason" selectedKey="ROUTINE">
+        <core:Item key="ROUTINE" text="Routine Distribution" />
+        <core:Item key="EMERGENCY" text="Emergency Restock" />
+        <core:Item key="RETURN" text="Return" />
+        <core:Item key="RECALL" text="Recall" />
+      </Select>
+
+      <!-- Notes -->
+      <Label text="Shipping Notes" class="sapUiSmallMarginTop" />
+      <TextArea id="transferNotes" rows="2" placeholder="Optional notes" />
+
+    </VBox>
+    <beginButton>
+      <Button text="Transfer &amp; Sign" type="Emphasized" press=".onTransferConfirm"/>
+    </beginButton>
+    <endButton>
+      <Button text="Cancel" press=".onTransferCancel"/>
+    </endButton>
+  </Dialog>
+</core:FragmentDefinition>

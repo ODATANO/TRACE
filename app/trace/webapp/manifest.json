@@ -1,0 +1,83 @@
+{
+  "_version": "1.65.0",
+  "sap.app": {
+    "id": "trace",
+    "type": "application",
+    "title": "TRACE — Pharma Supply Chain",
+    "applicationVersion": { "version": "1.0.0" },
+    "dataSources": {
+      "traceService": {
+        "uri": "/odata/v4/trace/",
+        "type": "OData",
+        "settings": {
+          "odataVersion": "4.0"
+        }
+      }
+    }
+  },
+  "sap.ui5": {
+    "rootView": {
+      "viewName": "trace.view.App",
+      "type": "XML",
+      "id": "appView",
+      "async": true
+    },
+    "models": {
+      "": {
+        "dataSource": "traceService",
+        "type": "sap.ui.model.odata.v4.ODataModel",
+        "settings": {
+          "synchronizationMode": "None",
+          "operationMode": "Server",
+          "autoExpandSelect": true,
+          "groupId": "$auto"
+        }
+      },
+      "wallet": {
+        "type": "sap.ui.model.json.JSONModel",
+        "settings": {
+          "data": {
+            "connected": false,
+            "name": "",
+            "icon": "",
+            "address": "",
+            "wallets": []
+          }
+        }
+      }
+    },
+    "routing": {
+      "config": {
+        "routerClass": "sap.m.routing.Router",
+        "type": "View",
+        "viewType": "XML",
+        "viewPath": "trace.view",
+        "controlId": "appNavContainer",
+        "controlAggregation": "pages",
+        "async": true
+      },
+      "routes": [
+        { "name": "batches",            "pattern": "",                            "target": "batches" },
+        { "name": "batchDetail",        "pattern": "batch/{batchId}",             "target": "batchDetail" },
+        { "name": "participants",       "pattern": "participants",                "target": "participants" },
+        { "name": "participantDetail",  "pattern": "participant/{participantId}", "target": "participantDetail" },
+        { "name": "verify",             "pattern": "verify",                      "target": "verify" }
+      ],
+      "targets": {
+        "batches":            { "viewName": "BatchList" },
+        "batchDetail":        { "viewName": "BatchDetail" },
+        "participants":       { "viewName": "Participants" },
+        "participantDetail":  { "viewName": "ParticipantDetail" },
+        "verify":             { "viewName": "Verify" }
+      }
+    },
+    "dependencies": {
+      "minUI5Version": "1.120.0",
+      "libs": {
+        "sap.m": {},
+        "sap.f": {},
+        "sap.ui.layout": {}
+      }
+    }
+  }
+}

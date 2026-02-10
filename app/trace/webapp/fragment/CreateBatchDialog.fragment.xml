@@ -1,0 +1,63 @@
+<core:FragmentDefinition
+  xmlns="sap.m"
+  xmlns:core="sap.ui.core"
+  xmlns:f="sap.ui.layout.form">
+
+  <Dialog id="createBatchDialog" title="Create New Batch" contentWidth="480px">
+    <content>
+      <f:SimpleForm
+        editable="true"
+        layout="ResponsiveGridLayout"
+        labelSpanXL="4" labelSpanL="4" labelSpanM="4"
+        emptySpanXL="0" emptySpanL="0" emptySpanM="0"
+        columnsXL="1" columnsL="1" columnsM="1">
+
+        <Label text="Batch Number" required="true" />
+        <Input id="createBatchNumber" value="{newBatch>/batchNumber}" />
+
+        <Label text="Product Name" required="true" />
+        <Input id="createProduct" value="{newBatch>/product}" placeholder="e.g. Aspirin 500mg" />
+
+        <Label text="Dosage Form" />
+        <Select id="createDosageForm" selectedKey="{newBatch>/dosageForm}">
+          <core:Item key="Tablet" text="Tablet" />
+          <core:Item key="Capsule" text="Capsule" />
+          <core:Item key="Liquid" text="Liquid" />
+          <core:Item key="Injection" text="Injection" />
+          <core:Item key="Cream" text="Cream" />
+          <core:Item key="Powder" text="Powder" />
+          <core:Item key="Other" text="Other" />
+        </Select>
+
+        <Label text="Manufacturing Date" required="true" />
+        <DatePicker id="createMfgDate" value="{newBatch>/mfgDate}" valueFormat="yyyy-MM-dd" displayFormat="dd.MM.yyyy" />
+
+        <Label text="Expiry Date" required="true" />
+        <DatePicker id="createExpDate" value="{newBatch>/expDate}" valueFormat="yyyy-MM-dd" displayFormat="dd.MM.yyyy" />
+
+        <Label text="Quantity" required="true" />
+        <Input id="createQuantity" value="{newBatch>/quantity}" type="Number" />
+
+        <Label text="Unit" />
+        <Select id="createUnit" selectedKey="{newBatch>/unit}">
+          <core:Item key="pcs" text="pcs" />
+          <core:Item key="kg" text="kg" />
+          <core:Item key="g" text="g" />
+          <core:Item key="liters" text="liters" />
+          <core:Item key="ml" text="ml" />
+        </Select>
+
+        <Label text="Storage Conditions" />
+        <TextArea id="createStorageConditions" value="{newBatch>/storageConditions}"
+          rows="2" placeholder="e.g. Store between 2-8°C" />
+      </f:SimpleForm>
+    </content>
+    <beginButton>
+      <Button text="Create" type="Emphasized" press=".onCreateBatchConfirm" />
+    </beginButton>
+    <endButton>
+      <Button text="Cancel" press=".onCreateBatchCancel" />
+    </endButton>
+  </Dialog>
+
+</core:FragmentDefinition>

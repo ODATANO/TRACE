@@ -1,0 +1,47 @@
+# CAP trace2
+_out
+*.db
+*.sqlite
+connection.properties
+default-*.json
+.cdsrc-private.json
+gen/
+node_modules/
+target/
+
+# Web IDE, App Studio
+.che/
+.gen/
+
+# MTA
+*_mta_build_tmp
+*.mtar
+mta_archives/
+
+# Secrets
+.env
+
+# Other
+.DS_Store
+*.orig
+*.log
+
+*.iml
+*.flattened-pom.xml
+
+# IDEs
+# .vscode
+# .idea
+
+# @cap-js/cds-typer
+@cds-models
+
+.claude/
+.vscode/
+
+# Aiken compilation artifacts
+artifacts/
+# Aiken's project working directory
+build/
+# Aiken's default documentation export
+docs/

@@ -1,0 +1,877 @@
+{
+  "namespace": "trace",
+  "definitions": {
+    "trace.Participants": {
+      "kind": "entity",
+      "elements": {
+        "ID": {
+          "key": true,
+          "type": "cds.UUID"
+        },
+        "name": {
+          "type": "cds.String",
+          "length": 255
+        },
+        "role": {
+          "type": "cds.String",
+          "enum": {
+            "Manufacturer": {},
+            "Distributor": {},
+            "Pharmacy": {},
+            "Regulator": {}
+          }
+        },
+        "address": {
+          "type": "cds.String",
+          "length": 120
+        },
+        "vkh": {
+          "type": "cds.String",
+          "length": 56
+        },
+        "isActive": {
+          "type": "cds.Boolean",
+          "default": {
+            "val": true
+          }
+        }
+      }
+    },
+    "trace.Batches": {
+      "kind": "entity",
+      "elements": {
+        "ID": {
+          "key": true,
+          "type": "cds.UUID"
+        },
+        "batchNumber": {
+          "type": "cds.String",
+          "length": 100
+        },
+        "product": {
+          "type": "cds.String",
+          "length": 255
+        },
+        "manufacturer": {
+          "type": "cds.Association",
+          "target": "trace.Participants",
+          "keys": [
+            {
+              "ref": [
+                "ID"
+              ]
+            }
+          ]
+        },
+        "currentHolder": {
+          "type": "cds.Association",
+          "target": "trace.Participants",
+          "keys": [
+            {
+              "ref": [
+                "ID"
+              ]
+            }
+          ]
+        },
+        "status": {
+          "type": "cds.String",
+          "enum": {
+            "DRAFT": {},
+            "MINTED": {},
+            "IN_TRANSIT": {},
+            "DELIVERED": {},
+            "RECALLED": {}
+          }
+        },
+        "originPayload": {
+          "type": "cds.LargeString"
+        },
+        "onChainAsset": {
+          "type": "cds.Composition",
+          "cardinality": {
+            "max": 1
+          },
+          "target": "trace.OnChainAssets",
+          "on": [
+            {
+              "ref": [
+                "onChainAsset",
+                "batch"
+              ]
+            },
+            "=",
+            {
+              "ref": [
+                "$self"
+              ]
+            }
+          ]
+        },
+        "proofEvents": {
+          "type": "cds.Composition",
+          "cardinality": {
+            "max": "*"
+          },
+          "target": "trace.ProofEvents",
+          "on": [
+            {
+              "ref": [
+                "proofEvents",
+                "batch"
+              ]
+            },
+            "=",
+            {
+              "ref": [
+                "$self"
+              ]
+            }
+          ]
+        },
+        "createdAt": {
+          "@cds.on.insert": {
+            "=": "$now"
+          },
+          "type": "cds.Timestamp"
+        },
+        "modifiedAt": {
+          "@cds.on.insert": {
+            "=": "$now"
+          },
+          "@cds.on.update": {
+            "=": "$now"
+          },
+          "type": "cds.Timestamp"
+        }
+      }
+    },
+    "trace.OnChainAssets": {
+      "kind": "entity",
+      "elements": {
+        "ID": {
+          "key": true,
+          "type": "cds.UUID"
+        },
+        "batch": {
+          "type": "cds.Association",
+          "target": "trace.Batches",
+          "keys": [
+            {
+              "ref": [
+                "ID"
+              ]
+            }
+          ]
+        },
+        "policyId": {
+          "type": "cds.String",
+          "length": 56
+        },
+        "assetName": {
+          "type": "cds.String",
+          "length": 64
+        },
+        "fingerprint": {
+          "type": "cds.String",
+          "length": 44
+        },
+        "currentUtxoRef": {
+          "type": "cds.String",
+          "length": 80
+        },
+        "datumHash": {
+          "type": "cds.String",
+          "length": 64
+        },
+        "step": {
+          "type": "cds.Integer",
+          "default": {
+            "val": 0
+          }
+        },
+        "currentHolder": {
+          "type": "cds.String",
+          "length": 56
+        }
+      }
+    },
+    "trace.ProofEvents": {
+      "kind": "entity",
+      "elements": {
+        "ID": {
+          "key": true,
+          "type": "cds.UUID"
+        },
+        "batch": {
+          "type": "cds.Association",
+          "target": "trace.Batches",
+          "keys": [
+            {
+              "ref": [
+                "ID"
+              ]
+            }
+          ]
+        },
+        "eventType": {
+          "type": "cds.String",
+          "enum": {
+            "MINT": {},
+            "TRANSFER": {},
+            "VERIFY": {},
+            "RECALL": {},
+            "DOCUMENT_ANCHOR": {}
+          }
+        },
+        "payloadDigest": {
+          "type": "cds.String",
+          "length": 64
+        },
+        "schema": {
+          "type": "cds.String",
+          "length": 100
+        },
+        "signerVkh": {
+          "type": "cds.String",
+          "length": 56
+        },
+        "onChainTxHash": {
+          "type": "cds.String",
+          "length": 64
+        },
+        "status": {
+          "type": "cds.String",
+          "enum": {
+            "PENDING": {},
+            "CONFIRMED": {},
+            "FAILED": {}
+          },
+          "default": {
+            "val": "PENDING"
+          }
+        },
+        "confirmations": {
+          "type": "cds.Integer",
+          "default": {
+            "val": 0
+          }
+        },
+        "errorMessage": {
+          "type": "cds.String",
+          "length": 500
+        },
+        "createdAt": {
+          "@cds.on.insert": {
+            "=": "$now"
+          },
+          "type": "cds.Timestamp"
+        }
+      }
+    },
+    "trace.DocumentAnchors": {
+      "kind": "entity",
+      "elements": {
+        "ID": {
+          "key": true,
+          "type": "cds.UUID"
+        },
+        "batch": {
+          "type": "cds.Association",
+          "target": "trace.Batches",
+          "keys": [
+            {
+              "ref": [
+                "ID"
+              ]
+            }
+          ]
+        },
+        "documentHash": {
+          "type": "cds.String",
+          "length": 64
+        },
+        "documentType": {
+          "type": "cds.String",
+          "length": 100
+        },
+        "visibility": {
+          "type": "cds.String",
+          "enum": {
+            "PUBLIC": {},
+            "HOLDER_ONLY": {},
+            "REGULATOR_ONLY": {}
+          }
+        },
+        "onChainTxHash": {
+          "type": "cds.String",
+          "length": 64
+        },
+        "status": {
+          "type": "cds.String",
+          "enum": {
+            "PENDING": {},
+            "CONFIRMED": {},
+            "FAILED": {}
+          },
+          "default": {
+            "val": "PENDING"
+          }
+        },
+        "createdAt": {
+          "@cds.on.insert": {
+            "=": "$now"
+          },
+          "type": "cds.Timestamp"
+        }
+      }
+    },
+    "TraceService": {
+      "@source": "srv/trace-service.cds",
+      "kind": "service",
+      "@path": "/odata/v4/trace"
+    },
+    "TraceService.Participants": {
+      "kind": "entity",
+      "projection": {
+        "from": {
+          "ref": [
+            "trace.Participants"
+          ]
+        }
+      },
+      "elements": {
+        "ID": {
+          "key": true,
+          "type": "cds.UUID"
+        },
+        "name": {
+          "type": "cds.String",
+          "length": 255
+        },
+        "role": {
+          "type": "cds.String",
+          "enum": {
+            "Manufacturer": {},
+            "Distributor": {},
+            "Pharmacy": {},
+            "Regulator": {}
+          }
+        },
+        "address": {
+          "type": "cds.String",
+          "length": 120
+        },
+        "vkh": {
+          "type": "cds.String",
+          "length": 56
+        },
+        "isActive": {
+          "type": "cds.Boolean",
+          "default": {
+            "val": true
+          }
+        }
+      }
+    },
+    "TraceService.Batches": {
+      "kind": "entity",
+      "projection": {
+        "from": {
+          "ref": [
+            "trace.Batches"
+          ]
+        }
+      },
+      "elements": {
+        "ID": {
+          "key": true,
+          "type": "cds.UUID"
+        },
+        "batchNumber": {
+          "type": "cds.String",
+          "length": 100
+        },
+        "product": {
+          "type": "cds.String",
+          "length": 255
+        },
+        "manufacturer": {
+          "type": "cds.Association",
+          "target": "TraceService.Participants",
+          "keys": [
+            {
+              "ref": [
+                "ID"
+              ]
+            }
+          ]
+        },
+        "currentHolder": {
+          "type": "cds.Association",
+          "target": "TraceService.Participants",
+          "keys": [
+            {
+              "ref": [
+                "ID"
+              ]
+            }
+          ]
+        },
+        "status": {
+          "type": "cds.String",
+          "enum": {
+            "DRAFT": {},
+            "MINTED": {},
+            "IN_TRANSIT": {},
+            "DELIVERED": {},
+            "RECALLED": {}
+          }
+        },
+        "originPayload": {
+          "type": "cds.LargeString"
+        },
+        "onChainAsset": {
+          "type": "cds.Composition",
+          "cardinality": {
+            "max": 1
+          },
+          "target": "TraceService.OnChainAssets",
+          "on": [
+            {
+              "ref": [
+                "onChainAsset",
+                "batch"
+              ]
+            },
+            "=",
+            {
+              "ref": [
+                "$self"
+              ]
+            }
+          ]
+        },
+        "proofEvents": {
+          "type": "cds.Composition",
+          "cardinality": {
+            "max": "*"
+          },
+          "target": "TraceService.ProofEvents",
+          "on": [
+            {
+              "ref": [
+                "proofEvents",
+                "batch"
+              ]
+            },
+            "=",
+            {
+              "ref": [
+                "$self"
+              ]
+            }
+          ]
+        },
+        "createdAt": {
+          "@cds.on.insert": {
+            "=": "$now"
+          },
+          "type": "cds.Timestamp"
+        },
+        "modifiedAt": {
+          "@cds.on.insert": {
+            "=": "$now"
+          },
+          "@cds.on.update": {
+            "=": "$now"
+          },
+          "type": "cds.Timestamp"
+        }
+      }
+    },
+    "TraceService.ProofEvents": {
+      "kind": "entity",
+      "projection": {
+        "from": {
+          "ref": [
+            "trace.ProofEvents"
+          ]
+        }
+      },
+      "elements": {
+        "ID": {
+          "key": true,
+          "type": "cds.UUID"
+        },
+        "batch": {
+          "type": "cds.Association",
+          "target": "TraceService.Batches",
+          "keys": [
+            {
+              "ref": [
+                "ID"
+              ]
+            }
+          ]
+        },
+        "eventType": {
+          "type": "cds.String",
+          "enum": {
+            "MINT": {},
+            "TRANSFER": {},
+            "VERIFY": {},
+            "RECALL": {},
+            "DOCUMENT_ANCHOR": {}
+          }
+        },
+        "payloadDigest": {
+          "type": "cds.String",
+          "length": 64
+        },
+        "schema": {
+          "type": "cds.String",
+          "length": 100
+        },
+        "signerVkh": {
+          "type": "cds.String",
+          "length": 56
+        },
+        "onChainTxHash": {
+          "type": "cds.String",
+          "length": 64
+        },
+        "status": {
+          "type": "cds.String",
+          "enum": {
+            "PENDING": {},
+            "CONFIRMED": {},
+            "FAILED": {}
+          },
+          "default": {
+            "val": "PENDING"
+          }
+        },
+        "confirmations": {
+          "type": "cds.Integer",
+          "default": {
+            "val": 0
+          }
+        },
+        "errorMessage": {
+          "type": "cds.String",
+          "length": 500
+        },
+        "createdAt": {
+          "@cds.on.insert": {
+            "=": "$now"
+          },
+          "type": "cds.Timestamp"
+        }
+      }
+    },
+    "TraceService.OnChainAssets": {
+      "kind": "entity",
+      "projection": {
+        "from": {
+          "ref": [
+            "trace.OnChainAssets"
+          ]
+        }
+      },
+      "elements": {
+        "ID": {
+          "key": true,
+          "type": "cds.UUID"
+        },
+        "batch": {
+          "type": "cds.Association",
+          "target": "TraceService.Batches",
+          "keys": [
+            {
+              "ref": [
+                "ID"
+              ]
+            }
+          ]
+        },
+        "policyId": {
+          "type": "cds.String",
+          "length": 56
+        },
+        "assetName": {
+          "type": "cds.String",
+          "length": 64
+        },
+        "fingerprint": {
+          "type": "cds.String",
+          "length": 44
+        },
+        "currentUtxoRef": {
+          "type": "cds.String",
+          "length": 80
+        },
+        "datumHash": {
+          "type": "cds.String",
+          "length": 64
+        },
+        "step": {
+          "type": "cds.Integer",
+          "default": {
+            "val": 0
+          }
+        },
+        "currentHolder": {
+          "type": "cds.String",
+          "length": 56
+        }
+      }
+    },
+    "TraceService.DocumentAnchors": {
+      "kind": "entity",
+      "projection": {
+        "from": {
+          "ref": [
+            "trace.DocumentAnchors"
+          ]
+        }
+      },
+      "elements": {
+        "ID": {
+          "key": true,
+          "type": "cds.UUID"
+        },
+        "batch": {
+          "type": "cds.Association",
+          "target": "TraceService.Batches",
+          "keys": [
+            {
+              "ref": [
+                "ID"
+              ]
+            }
+          ]
+        },
+        "documentHash": {
+          "type": "cds.String",
+          "length": 64
+        },
+        "documentType": {
+          "type": "cds.String",
+          "length": 100
+        },
+        "visibility": {
+          "type": "cds.String",
+          "enum": {
+            "PUBLIC": {},
+            "HOLDER_ONLY": {},
+            "REGULATOR_ONLY": {}
+          }
+        },
+        "onChainTxHash": {
+          "type": "cds.String",
+          "length": 64
+        },
+        "status": {
+          "type": "cds.String",
+          "enum": {
+            "PENDING": {},
+            "CONFIRMED": {},
+            "FAILED": {}
+          },
+          "default": {
+            "val": "PENDING"
+          }
+        },
+        "createdAt": {
+          "@cds.on.insert": {
+            "=": "$now"
+          },
+          "type": "cds.Timestamp"
+        }
+      }
+    },
+    "TraceService.MintBatchNft": {
+      "kind": "action",
+      "params": {
+        "batchId": {
+          "type": "cds.UUID"
+        }
+      },
+      "returns": {
+        "elements": {
+          "policyId": {
+            "type": "cds.String"
+          },
+          "assetName": {
+            "type": "cds.String"
+          },
+          "fingerprint": {
+            "type": "cds.String"
+          },
+          "unsignedCbor": {
+            "type": "cds.LargeString"
+          },
+          "signingRequestId": {
+            "type": "cds.String"
+          },
+          "txHash": {
+            "type": "cds.String"
+          }
+        }
+      }
+    },
+    "TraceService.TransferBatch": {
+      "kind": "action",
+      "params": {
+        "batchId": {
+          "type": "cds.UUID"
+        },
+        "toParticipantId": {
+          "type": "cds.UUID"
+        },
+        "eventType": {
+          "type": "cds.String"
+        },
+        "payloadDigest": {
+          "type": "cds.String"
+        },
+        "schema": {
+          "type": "cds.String"
+        }
+      },
+      "returns": {
+        "elements": {
+          "unsignedCbor": {
+            "type": "cds.LargeString"
+          },
+          "signingRequestId": {
+            "type": "cds.String"
+          },
+          "txHash": {
+            "type": "cds.String"
+          }
+        }
+      }
+    },
+    "TraceService.SubmitSigned": {
+      "kind": "action",
+      "params": {
+        "signingRequestId": {
+          "type": "cds.String"
+        },
+        "signature": {
+          "type": "cds.LargeString"
+        }
+      },
+      "returns": {
+        "elements": {
+          "txHash": {
+            "type": "cds.String"
+          },
+          "status": {
+            "type": "cds.String"
+          }
+        }
+      }
+    },
+    "TraceService.VerifyBatch": {
+      "kind": "function",
+      "params": {
+        "batchIdOrFingerprint": {
+          "type": "cds.String"
+        }
+      },
+      "returns": {
+        "elements": {
+          "fingerprint": {
+            "type": "cds.String"
+          },
+          "currentHolder": {
+            "type": "cds.String"
+          },
+          "step": {
+            "type": "cds.Integer"
+          },
+          "isValid": {
+            "type": "cds.Boolean"
+          },
+          "steps": {
+            "items": {
+              "elements": {
+                "step": {
+                  "type": "cds.Integer"
+                },
+                "holder": {
+                  "type": "cds.String"
+                },
+                "eventType": {
+                  "type": "cds.String"
+                },
+                "txHash": {
+                  "type": "cds.String"
+                },
+                "status": {
+                  "type": "cds.String"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "cds.outbox.Messages": {
+      "kind": "entity",
+      "elements": {
+        "ID": {
+          "key": true,
+          "type": "cds.UUID"
+        },
+        "timestamp": {
+          "type": "cds.Timestamp"
+        },
+        "target": {
+          "type": "cds.String"
+        },
+        "msg": {
+          "type": "cds.LargeString"
+        },
+        "attempts": {
+          "type": "cds.Integer",
+          "default": {
+            "val": 0
+          }
+        },
+        "partition": {
+          "type": "cds.Integer",
+          "default": {
+            "val": 0
+          }
+        },
+        "lastError": {
+          "type": "cds.LargeString"
+        },
+        "lastAttemptTimestamp": {
+          "type": "cds.Timestamp"
+        },
+        "status": {
+          "type": "cds.String",
+          "length": 23
+        },
+        "task": {
+          "type": "cds.String",
+          "length": 255
+        },
+        "appid": {
+          "type": "cds.String",
+          "length": 255
+        }
+      }
+    }
+  },
+  "meta": {
+    "creator": "CDS Compiler v6.7.2",
+    "flavor": "inferred"
+  },
+  "$version": "2.0"
+}
