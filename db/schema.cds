@@ -59,16 +59,12 @@ entity DocumentAnchors {
   key ID           : UUID;
   batch            : Association to Batches;
   documentHash     : String(64);  // SHA-256 of the document
-  documentType     : String(100); // e.g. CERTIFICATE_OF_ANALYSIS, COLD_CHAIN_LOG
+  documentType     : String(100); // e.g. CERTIFICATE_OF_ANALYSIS
   visibility       : String enum { PUBLIC; HOLDER_ONLY; REGULATOR_ONLY };
   buildId          : String(36);  // ODATANO TransactionBuilds.id
   signingRequestId : String(36);  // ODATANO SigningRequests.id
   submissionId     : String(36);  // ODATANO TransactionSubmissions.id
   onChainTxHash    : String(64);
   status           : String enum { PENDING; SUBMITTED; CONFIRMED; FAILED } default 'PENDING';
-  // Cold-chain specific fields (null for non-cold-chain anchors)
-  minTemp          : Decimal;
-  maxTemp          : Decimal;
-  inRange          : Boolean;
   createdAt        : Timestamp @cds.on.insert: $now;
 }

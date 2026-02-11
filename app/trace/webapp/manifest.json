@@ -76,7 +76,8 @@
       "libs": {
         "sap.m": {},
         "sap.f": {},
-        "sap.ui.layout": {}
+        "sap.ui.layout": {},
+        "sap.ui.unified": {}
       }
     }
   }

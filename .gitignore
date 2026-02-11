@@ -1,6 +1,9 @@
 # CAP trace2
 _out
 *.db
+*db.sqlite-shm
+*db.sqlite-wal
+
 *.sqlite
 connection.properties
 default-*.json
@@ -45,3 +48,4 @@ artifacts/
 build/
 # Aiken's default documentation export
 docs/
+

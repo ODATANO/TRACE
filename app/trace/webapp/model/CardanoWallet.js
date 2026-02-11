@@ -65,8 +65,25 @@ sap.ui.define([], function () {
     return bytes;
   }
 
+  /**
+   * Strip CBOR byte-string wrapper from CIP-30 hex address if present.
+   * CIP-30 wallets (Eternl, Lace) return cbor<address>, e.g. "5839 00ab..."
+   * where 58=CBOR major type 2, 39=57 bytes. Nami returns raw hex.
+   */
+  function _stripCborByteString(hex) {
+    var b0 = parseInt(hex.substr(0, 2), 16);
+    if ((b0 & 0xe0) === 0x40) { // CBOR major type 2 (byte string)
+      var addInfo = b0 & 0x1f;
+      if (addInfo <= 23) return hex.substr(2);  // length in first byte
+      if (addInfo === 24) return hex.substr(4);  // 1-byte length follows
+      if (addInfo === 25) return hex.substr(6);  // 2-byte length follows
+    }
+    return hex;
+  }
+
   function _hexToBech32(hexAddr) {
-    var bytes = _hexToBytes(hexAddr);
+    var rawHex = _stripCborByteString(hexAddr);
+    var bytes = _hexToBytes(rawHex);
     var network = bytes[0] & 0x0F;
     var hrp = network === 0 ? "addr_test" : "addr";
     var data5bit = _convertBits(bytes, 8, 5, true);
@@ -126,10 +143,12 @@ sap.ui.define([], function () {
           return Promise.reject(new Error("No addresses found in wallet"));
         }
 
-        _addressHex = sAddrHex;
+        // Strip CBOR wrapper if present (Eternl/Lace wrap, Nami doesn't)
+        var sRawHex = _stripCborByteString(sAddrHex);
+        _addressHex = sRawHex;
         _addressBech32 = _hexToBech32(sAddrHex);
         // Shelley address: 1 byte header + 28 bytes payment key hash
-        _vkh = sAddrHex.slice(2, 58);
+        _vkh = sRawHex.slice(2, 58);
 
         return {
           name: _name,

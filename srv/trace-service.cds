@@ -76,22 +76,6 @@ service TraceService @(path: '/odata/v4/trace') {
     txBodyHash       : String;
   };
 
-  // Anchor cold-chain telemetry for a batch
-  action AnchorColdChain(
-    batchId       : UUID,
-    telemetryHash : String,
-    minTemp       : Decimal,
-    maxTemp       : Decimal,
-    inRange       : Boolean,
-    walletAddress : String,
-    walletVkh     : String
-  ) returns {
-    buildId          : String;
-    signingRequestId : String;
-    unsignedCbor     : LargeString;
-    txBodyHash       : String;
-  };
-
   // Recall a batch — creates on-chain proof with reason (pharma compliance)
   action RecallBatch(
     batchId       : UUID,

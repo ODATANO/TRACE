@@ -3,6 +3,7 @@
   xmlns:mvc="sap.ui.core.mvc"
   xmlns="sap.m"
   xmlns:layout="sap.ui.layout"
+  xmlns:form="sap.ui.layout.form"
   xmlns:core="sap.ui.core">
 
   <Page id="batchDetailPage"
@@ -12,17 +13,15 @@
 
     <headerContent>
       <Button text="Mint NFT" icon="sap-icon://create-form" type="Emphasized"
-        press="onMint" visible="{= ${status} === 'DRAFT'}"/>
+        press="onMint" visible="{path: 'status', formatter: '.formatDraftOnly'}"/>
       <Button text="Transfer" icon="sap-icon://shipping-status"
-        press="onTransfer" visible="{= ${status} === 'MINTED' || ${status} === 'IN_TRANSIT'}"/>
+        press="onTransfer" visible="{path: 'status', formatter: '.formatTransferVisible'}"/>
       <Button text="Confirm Receipt" icon="sap-icon://accept"
-        press="onConfirmReceipt" visible="{= ${status} === 'IN_TRANSIT'}"/>
+        press="onConfirmReceipt" visible="{path: 'status', formatter: '.formatConfirmReceiptVisible'}"/>
       <Button text="Anchor Doc" icon="sap-icon://document"
-        press="onAnchorDoc" visible="{= ${status} !== 'DRAFT' &amp;&amp; ${status} !== 'RECALLED'}"/>
-      <Button text="Cold Chain" icon="sap-icon://temperature"
-        press="onAnchorColdChain" visible="{= ${status} !== 'DRAFT' &amp;&amp; ${status} !== 'RECALLED'}"/>
+        press="onAnchorDoc" visible="{path: 'status', formatter: '.formatNonDraft'}"/>
       <Button text="Recall" icon="sap-icon://alert" type="Reject"
-        press="onRecall" visible="{= ${status} !== 'DRAFT' &amp;&amp; ${status} !== 'RECALLED'}"/>
+        press="onRecall" visible="{path: 'status', formatter: '.formatRecallVisible'}"/>
     </headerContent>
 
     <!-- Recalled Banner -->
@@ -31,7 +30,7 @@
       type="Error"
       showIcon="true"
       showCloseButton="false"
-      visible="{= ${status} === 'RECALLED'}"
+      visible="{path: 'status', formatter: '.formatRecalledVisible'}"
       class="sapUiSmallMarginBottom" />
 
     <!-- Hidden binding to ensure autoExpandSelect includes originPayload -->
@@ -51,7 +50,7 @@
 
     <!-- Supply Chain Progress Bar -->
     <HBox justifyContent="SpaceAround" alignItems="Center" class="sapUiMediumMargin"
-      visible="{= ${status} !== 'DRAFT'}">
+      visible="{path: 'status', formatter: '.formatNonDraft'}">
 
       <!-- Step 1: Manufactured -->
       <VBox alignItems="Center">
@@ -88,8 +87,8 @@
           <layout:VerticalLayout class="sapUiSmallMargin" width="100%">
 
             <!-- Editable form for DRAFT batches -->
-            <layout:form.SimpleForm id="batchInfoFormEdit"
-              visible="{= ${status} === 'DRAFT'}"
+            <form:SimpleForm id="batchInfoFormEdit"
+              visible="{path: 'status', formatter: '.formatDraftOnly'}"
               editable="true" layout="ResponsiveGridLayout"
               labelSpanXL="4" labelSpanL="4" labelSpanM="4"
               columnsXL="1" columnsL="1" columnsM="1">
@@ -128,17 +127,17 @@
 
               <Label text="Storage Conditions" />
               <TextArea value="{batchInfo>/storageConditions}" rows="2" />
-            </layout:form.SimpleForm>
+            </form:SimpleForm>
 
-            <Toolbar visible="{= ${status} === 'DRAFT'}">
+            <Toolbar visible="{path: 'status', formatter: '.formatDraftOnly'}">
               <ToolbarSpacer />
               <Button text="Save Batch Info" icon="sap-icon://save" type="Emphasized"
                 press="onSaveBatchInfo" />
             </Toolbar>
 
             <!-- Read-only form for non-DRAFT batches -->
-            <layout:form.SimpleForm id="batchInfoFormReadOnly"
-              visible="{= ${status} !== 'DRAFT'}"
+            <form:SimpleForm id="batchInfoFormReadOnly"
+              visible="{path: 'status', formatter: '.formatNonDraft'}"
               editable="false" layout="ResponsiveGridLayout"
               labelSpanXL="4" labelSpanL="4" labelSpanM="4"
               columnsXL="1" columnsL="1" columnsM="1">
@@ -160,14 +159,14 @@
 
               <Label text="Storage Conditions" />
               <Text text="{batchInfo>/storageConditions}" />
-            </layout:form.SimpleForm>
+            </form:SimpleForm>
 
           </layout:VerticalLayout>
         </IconTabFilter>
 
         <!-- Events Tab -->
-        <IconTabFilter text="Proof Events" icon="sap-icon://history" count="{= ${proofEvents}.length}" key="events">
-          <Table items="{
+        <IconTabFilter text="Proof Events" icon="sap-icon://history" count="{proofEvents/$count}" key="events">
+          <Table id="proofEventsTable" updateFinished="onProofEventsUpdated" items="{
             path: 'proofEvents',
             parameters: { $orderby: 'createdAt desc' }
           }">
@@ -190,13 +189,8 @@
                     target="_blank"
                     class="txHashLink"
                     enabled="{= !!${onChainTxHash}}"/>
-                  <Text text="{
-                    path: 'createdAt',
-                    type: 'sap.ui.model.type.DateTime',
-                    formatOptions: { style: 'short' }
-                  }"/>
+                  <Text text="{path: 'createdAt', formatter: '.formatTimestamp'}"/>
                   <Button text="Retry" icon="sap-icon://refresh" type="Reject"
-                    visible="{= ${status} === 'FAILED'}"
                     press="onRetry"/>
                 </cells>
               </ColumnListItem>
@@ -207,7 +201,7 @@
         <!-- On-Chain Asset Tab -->
         <IconTabFilter text="On-Chain Asset" icon="sap-icon://batch-payments" key="asset">
           <layout:VerticalLayout class="sapUiSmallMargin" width="100%">
-            <layout:form.SimpleForm editable="false" layout="ResponsiveGridLayout" labelSpanXL="4" labelSpanL="4" labelSpanM="4">
+            <form:SimpleForm editable="false" layout="ResponsiveGridLayout" labelSpanXL="4" labelSpanL="4" labelSpanM="4">
               <Label text="Policy ID"/>
               <Text text="{onChainAsset/policyId}"/>
               <Label text="Asset Name (hex)"/>
@@ -220,7 +214,7 @@
               <Text text="{onChainAsset/step}"/>
               <Label text="Current Holder (vkh)"/>
               <Text text="{onChainAsset/currentHolder}"/>
-            </layout:form.SimpleForm>
+            </form:SimpleForm>
           </layout:VerticalLayout>
         </IconTabFilter>
 
@@ -235,7 +229,6 @@
               <Column><Text text="Hash"/></Column>
               <Column><Text text="Visibility"/></Column>
               <Column><Text text="Status"/></Column>
-              <Column><Text text="Temp Range"/></Column>
               <Column><Text text="Tx Hash"/></Column>
             </columns>
             <items>
@@ -245,7 +238,6 @@
                   <Text text="{= ${documentHash} ? ${documentHash}.substring(0,16) + '...' : ''}"/>
                   <Text text="{visibility}"/>
                   <ObjectStatus text="{status}" state="{path: 'status', formatter: '.formatEventStatus'}"/>
-                  <Text text="{= ${minTemp} !== null &amp;&amp; ${minTemp} !== undefined ? ${minTemp} + ' / ' + ${maxTemp} + (${inRange} ? ' OK' : ' BREACH') : '-'}"/>
                   <Link text="{= ${onChainTxHash} ? ${onChainTxHash}.substring(0,16) + '...' : '-'}"
                     href="{= ${onChainTxHash} ? 'https://preview.cardanoscan.io/transaction/' + ${onChainTxHash} : ''}"
                     target="_blank"

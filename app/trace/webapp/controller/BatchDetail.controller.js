@@ -106,6 +106,41 @@ sap.ui.define([
       }
     },
 
+    formatRetryVisible: function (sStatus) {
+      return sStatus === "FAILED";
+    },
+
+    formatTimestamp: function (sValue) {
+      if (!sValue) return "";
+      var oDate = new Date(sValue);
+      var oFormat = sap.ui.core.format.DateFormat.getDateTimeInstance({ style: "medium" });
+      return oFormat.format(oDate);
+    },
+
+    formatDraftOnly: function (sStatus) {
+      return sStatus === "DRAFT";
+    },
+
+    formatNonDraft: function (sStatus) {
+      return !!sStatus && sStatus !== "DRAFT";
+    },
+
+    formatTransferVisible: function (sStatus) {
+      return sStatus === "MINTED" || sStatus === "IN_TRANSIT";
+    },
+
+    formatConfirmReceiptVisible: function (sStatus) {
+      return sStatus === "IN_TRANSIT";
+    },
+
+    formatRecalledVisible: function (sStatus) {
+      return sStatus === "RECALLED";
+    },
+
+    formatRecallVisible: function (sStatus) {
+      return sStatus === "MINTED" || sStatus === "IN_TRANSIT";
+    },
+
     // --- Supply Chain Progress Bar Colors ---
 
     formatStep1Color: function (sStatus) {
@@ -249,6 +284,21 @@ sap.ui.define([
         });
     },
 
+    // --- Table update handler ---
+
+    onProofEventsUpdated: function () {
+      var oTable = this.byId("proofEventsTable");
+      if (!oTable) return;
+      oTable.getItems().forEach(function (oItem) {
+        var oCells = oItem.getCells();
+        if (oCells && oCells.length > 5) {
+          var oBtn = oCells[5]; // Retry button is the 6th cell
+          var sStatus = oItem.getBindingContext().getProperty("status");
+          oBtn.setVisible(sStatus === "FAILED");
+        }
+      });
+    },
+
     // --- Action Handlers ---
 
     onMint: function () {
@@ -367,84 +417,90 @@ sap.ui.define([
         }.bind(this));
       }
       this._pAnchorDialog.then(function (oDialog) {
-        sap.ui.getCore().byId(this.getView().getId() + "--anchorMode").setSelectedKey("document");
-        this.onAnchorModeChange({ getSource: function () { return { getSelectedKey: function () { return "document"; } }; } });
+        var sViewId = this.getView().getId();
+        // Reset dialog fields
+        var oUploader = sap.ui.getCore().byId(sViewId + "--anchorFileUploader");
+        if (oUploader) oUploader.clear();
+        var oInfo = sap.ui.getCore().byId(sViewId + "--anchorFileInfo");
+        if (oInfo) oInfo.setText("");
+        var oHash = sap.ui.getCore().byId(sViewId + "--anchorHash");
+        if (oHash) { oHash.setValue(""); oHash.setEditable(true); }
+        var oDocType = sap.ui.getCore().byId(sViewId + "--anchorDocType");
+        if (oDocType) oDocType.setValue("");
         oDialog.open();
       }.bind(this));
     },
 
-    onAnchorColdChain: function () {
-      if (!this._pAnchorDialog) {
-        this._pAnchorDialog = Fragment.load({
-          id: this.getView().getId(),
-          name: "trace.fragment.AnchorDialog",
-          controller: this
-        }).then(function (oDialog) {
-          this.getView().addDependent(oDialog);
-          return oDialog;
-        }.bind(this));
-      }
-      this._pAnchorDialog.then(function (oDialog) {
-        sap.ui.getCore().byId(this.getView().getId() + "--anchorMode").setSelectedKey("coldchain");
-        this.onAnchorModeChange({ getSource: function () { return { getSelectedKey: function () { return "coldchain"; } }; } });
-        oDialog.open();
-      }.bind(this));
-    },
+    onAnchorFileSelected: function (oEvent) {
+      var aFiles = oEvent.getParameter("files");
+      if (!aFiles || aFiles.length === 0) return;
 
-    onAnchorModeChange: function (oEvent) {
-      var sKey = oEvent.getParameter("key") || oEvent.getSource().getSelectedKey();
+      var oFile = aFiles[0];
       var sViewId = this.getView().getId();
-      var bColdChain = sKey === "coldchain";
+      var oHashInput = sap.ui.getCore().byId(sViewId + "--anchorHash");
+      var oFileInfo = sap.ui.getCore().byId(sViewId + "--anchorFileInfo");
+      var oDocTypeInput = sap.ui.getCore().byId(sViewId + "--anchorDocType");
 
-      // Toggle document fields
-      ["anchorDocTypeLabel", "anchorDocType", "anchorVisLabel", "anchorVisibility"].forEach(function (sId) {
-        var oCtrl = sap.ui.getCore().byId(sViewId + "--" + sId);
-        if (oCtrl) oCtrl.setVisible(!bColdChain);
-      });
-      // Toggle cold chain fields
-      ["anchorMinTempLabel", "anchorMinTemp", "anchorMaxTempLabel", "anchorMaxTemp", "anchorInRangeLabel", "anchorInRange"].forEach(function (sId) {
-        var oCtrl = sap.ui.getCore().byId(sViewId + "--" + sId);
-        if (oCtrl) oCtrl.setVisible(bColdChain);
-      });
+      // Show file info
+      var sSize = oFile.size < 1024 * 1024
+        ? (oFile.size / 1024).toFixed(1) + " KB"
+        : (oFile.size / (1024 * 1024)).toFixed(1) + " MB";
+      oFileInfo.setText(oFile.name + " (" + sSize + ") — computing hash...");
+
+      // Suggest document type from extension
+      if (oDocTypeInput && !oDocTypeInput.getValue()) {
+        var sExt = oFile.name.split(".").pop().toLowerCase();
+        var mTypes = {
+          pdf: "CERTIFICATE_OF_ANALYSIS",
+          csv: "LAB_REPORT",
+          xlsx: "LAB_REPORT",
+          png: "PHOTO_EVIDENCE",
+          jpg: "PHOTO_EVIDENCE",
+          jpeg: "PHOTO_EVIDENCE",
+          json: "TELEMETRY_DATA",
+          xml: "REGULATORY_FILING"
+        };
+        if (mTypes[sExt]) oDocTypeInput.setValue(mTypes[sExt]);
+      }
+
+      // Read file and compute SHA-256
+      var oReader = new FileReader();
+      oReader.onload = function (e) {
+        crypto.subtle.digest("SHA-256", e.target.result).then(function (hashBuffer) {
+          var aBytes = new Uint8Array(hashBuffer);
+          var sHex = Array.from(aBytes).map(function (b) {
+            return b.toString(16).padStart(2, "0");
+          }).join("");
+          oHashInput.setValue(sHex);
+          oHashInput.setEditable(false);
+          oFileInfo.setText(oFile.name + " (" + sSize + ")");
+        });
+      };
+      oReader.readAsArrayBuffer(oFile);
     },
 
     onAnchorConfirm: function () {
       var sViewId = this.getView().getId();
       var oContext = this.getView().getBindingContext();
       var sBatchId = oContext.getProperty("ID");
-      var sMode = sap.ui.getCore().byId(sViewId + "--anchorMode").getSelectedKey();
       var sHash = sap.ui.getCore().byId(sViewId + "--anchorHash").getValue();
 
       if (!sHash) {
-        MessageBox.warning("Please enter the document hash.");
+        MessageBox.warning("Please enter the document hash or upload a file.");
         return;
       }
 
       this._pAnchorDialog.then(function (d) { d.close(); });
 
-      if (sMode === "coldchain") {
-        var sMinTemp = sap.ui.getCore().byId(sViewId + "--anchorMinTemp").getValue();
-        var sMaxTemp = sap.ui.getCore().byId(sViewId + "--anchorMaxTemp").getValue();
-        var bInRange = sap.ui.getCore().byId(sViewId + "--anchorInRange").getState();
+      var sDocType = sap.ui.getCore().byId(sViewId + "--anchorDocType").getValue();
+      var sVisibility = sap.ui.getCore().byId(sViewId + "--anchorVisibility").getSelectedKey();
 
-        this._signAndSubmit("AnchorColdChain", {
-          batchId: sBatchId,
-          telemetryHash: sHash,
-          minTemp: parseFloat(sMinTemp) || 0,
-          maxTemp: parseFloat(sMaxTemp) || 0,
-          inRange: bInRange
-        });
-      } else {
-        var sDocType = sap.ui.getCore().byId(sViewId + "--anchorDocType").getValue();
-        var sVisibility = sap.ui.getCore().byId(sViewId + "--anchorVisibility").getSelectedKey();
-
-        this._signAndSubmit("AnchorDocument", {
-          batchId: sBatchId,
-          documentHash: sHash,
-          documentType: sDocType || "GENERIC",
-          visibility: sVisibility || "PUBLIC"
-        });
-      }
+      this._signAndSubmit("AnchorDocument", {
+        batchId: sBatchId,
+        documentHash: sHash,
+        documentType: sDocType || "GENERIC",
+        visibility: sVisibility || "PUBLIC"
+      });
     },
 
     onAnchorCancel: function () {

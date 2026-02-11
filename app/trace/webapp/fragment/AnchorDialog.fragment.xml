@@ -1,20 +1,25 @@
 <core:FragmentDefinition
   xmlns="sap.m"
-  xmlns:core="sap.ui.core">
+  xmlns:core="sap.ui.core"
+  xmlns:unified="sap.ui.unified">
 
   <Dialog title="Anchor Document On-Chain">
     <VBox class="sapUiSmallMargin">
-      <SegmentedButton id="anchorMode" selectedKey="document" selectionChange="onAnchorModeChange">
-        <items>
-          <SegmentedButtonItem key="document" text="Document" icon="sap-icon://document"/>
-          <SegmentedButtonItem key="coldchain" text="Cold Chain" icon="sap-icon://temperature"/>
-        </items>
-      </SegmentedButton>
+
+      <Label text="Document File" class="sapUiSmallMarginTop"/>
+      <HBox alignItems="Center">
+        <unified:FileUploader id="anchorFileUploader"
+          placeholder="Choose a file..."
+          change="onAnchorFileSelected"
+          fileType="pdf,png,jpg,jpeg,csv,xlsx,doc,docx,xml,json,txt"
+          buttonText="Browse"
+          width="100%"/>
+      </HBox>
+      <Text id="anchorFileInfo" text="" class="sapUiTinyMarginTop"/>
 
       <Label text="SHA-256 Hash" required="true" class="sapUiSmallMarginTop"/>
-      <Input id="anchorHash" placeholder="64-char hex hash of the document/telemetry" maxLength="64"/>
+      <Input id="anchorHash" placeholder="Auto-computed from file or enter manually" maxLength="64"/>
 
-      <!-- Document fields -->
       <Label id="anchorDocTypeLabel" text="Document Type" class="sapUiSmallMarginTop"/>
       <Input id="anchorDocType" placeholder="e.g. CERTIFICATE_OF_ANALYSIS"/>
 
@@ -24,16 +29,6 @@
         <core:Item key="HOLDER_ONLY" text="Holder Only"/>
         <core:Item key="REGULATOR_ONLY" text="Regulator Only"/>
       </Select>
-
-      <!-- Cold chain fields -->
-      <Label id="anchorMinTempLabel" text="Min Temperature" visible="false" class="sapUiSmallMarginTop"/>
-      <Input id="anchorMinTemp" type="Number" placeholder="e.g. 2.0" visible="false"/>
-
-      <Label id="anchorMaxTempLabel" text="Max Temperature" visible="false"/>
-      <Input id="anchorMaxTemp" type="Number" placeholder="e.g. 8.0" visible="false"/>
-
-      <Label id="anchorInRangeLabel" text="Within Range" visible="false"/>
-      <Switch id="anchorInRange" state="true" visible="false"/>
     </VBox>
 
     <beginButton>
