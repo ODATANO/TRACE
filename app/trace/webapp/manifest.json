@@ -38,9 +38,15 @@
         "settings": {
           "data": {
             "connected": false,
+            "connecting": false,
+            "error": "",
             "name": "",
             "icon": "",
             "address": "",
+            "bech32": "",
+            "vkh": "",
+            "participantId": "",
+            "participantName": "",
             "wallets": []
           }
         }

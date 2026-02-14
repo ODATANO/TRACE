@@ -13,15 +13,15 @@
 
     <headerContent>
       <Button text="Mint NFT" icon="sap-icon://create-form" type="Emphasized"
-        press="onMint" visible="{path: 'status', formatter: '.formatDraftOnly'}"/>
+        press="onMint" visible="{path: 'status', targetType: 'any', formatter: '.formatDraftOnly'}"/>
       <Button text="Transfer" icon="sap-icon://shipping-status"
-        press="onTransfer" visible="{path: 'status', formatter: '.formatTransferVisible'}"/>
+        press="onTransfer" visible="{path: 'status', targetType: 'any', formatter: '.formatTransferVisible'}"/>
       <Button text="Confirm Receipt" icon="sap-icon://accept"
-        press="onConfirmReceipt" visible="{path: 'status', formatter: '.formatConfirmReceiptVisible'}"/>
+        press="onConfirmReceipt" visible="{path: 'status', targetType: 'any', formatter: '.formatConfirmReceiptVisible'}"/>
       <Button text="Anchor Doc" icon="sap-icon://document"
-        press="onAnchorDoc" visible="{path: 'status', formatter: '.formatNonDraft'}"/>
+        press="onAnchorDoc" visible="{path: 'status', targetType: 'any', formatter: '.formatNonDraft'}"/>
       <Button text="Recall" icon="sap-icon://alert" type="Reject"
-        press="onRecall" visible="{path: 'status', formatter: '.formatRecallVisible'}"/>
+        press="onRecall" visible="{path: 'status', targetType: 'any', formatter: '.formatRecallVisible'}"/>
     </headerContent>
 
     <!-- Recalled Banner -->
@@ -30,7 +30,7 @@
       type="Error"
       showIcon="true"
       showCloseButton="false"
-      visible="{path: 'status', formatter: '.formatRecalledVisible'}"
+      visible="{path: 'status', targetType: 'any', formatter: '.formatRecalledVisible'}"
       class="sapUiSmallMarginBottom" />
 
     <!-- Hidden binding to ensure autoExpandSelect includes originPayload -->
@@ -39,7 +39,7 @@
     <ObjectHeader
       title="{batchNumber}"
       number="{status}"
-      numberState="{path: 'status', formatter: '.formatStatusState'}"
+      numberState="{path: 'status', targetType: 'any', formatter: '.formatStatusState'}"
       responsive="true">
       <attributes>
         <ObjectAttribute title="Product" text="{product}"/>
@@ -50,32 +50,32 @@
 
     <!-- Supply Chain Progress Bar -->
     <HBox justifyContent="SpaceAround" alignItems="Center" class="sapUiMediumMargin"
-      visible="{path: 'status', formatter: '.formatNonDraft'}">
+      visible="{path: 'status', targetType: 'any', formatter: '.formatNonDraft'}">
 
       <!-- Step 1: Manufactured -->
       <VBox alignItems="Center">
         <core:Icon src="sap-icon://factory" size="2rem"
-          color="{path: 'status', formatter: '.formatStep1Color'}" />
+          color="{path: 'status', targetType: 'any', formatter: '.formatStep1Color'}" />
         <Text text="Manufactured" class="sapUiTinyMarginTop" />
       </VBox>
 
       <core:Icon src="sap-icon://arrow-right" size="1.2rem"
-        color="{path: 'status', formatter: '.formatStep2Color'}" />
+        color="{path: 'status', targetType: 'any', formatter: '.formatStep2Color'}" />
 
       <!-- Step 2: In Distribution -->
       <VBox alignItems="Center">
         <core:Icon src="sap-icon://shipping-status" size="2rem"
-          color="{path: 'status', formatter: '.formatStep2Color'}" />
+          color="{path: 'status', targetType: 'any', formatter: '.formatStep2Color'}" />
         <Text text="In Distribution" class="sapUiTinyMarginTop" />
       </VBox>
 
       <core:Icon src="sap-icon://arrow-right" size="1.2rem"
-        color="{path: 'status', formatter: '.formatStep3Color'}" />
+        color="{path: 'status', targetType: 'any', formatter: '.formatStep3Color'}" />
 
       <!-- Step 3: Delivered -->
       <VBox alignItems="Center">
         <core:Icon src="sap-icon://accept" size="2rem"
-          color="{path: 'status', formatter: '.formatStep3Color'}" />
+          color="{path: 'status', targetType: 'any', formatter: '.formatStep3Color'}" />
         <Text text="Delivered" class="sapUiTinyMarginTop" />
       </VBox>
     </HBox>
@@ -86,18 +86,16 @@
         <IconTabFilter text="Batch Info" icon="sap-icon://product" key="info">
           <layout:VerticalLayout class="sapUiSmallMargin" width="100%">
 
-            <!-- Editable form for DRAFT batches -->
-            <form:SimpleForm id="batchInfoFormEdit"
-              visible="{path: 'status', formatter: '.formatDraftOnly'}"
-              editable="true" layout="ResponsiveGridLayout"
-              labelSpanXL="4" labelSpanL="4" labelSpanM="4"
+            <form:SimpleForm id="batchInfoForm"
+              editable="{path: 'status', targetType: 'any', formatter: '.formatDraftOnly'}"
+              layout="ColumnLayout"
               columnsXL="1" columnsL="1" columnsM="1">
 
-              <Label text="Product Name" required="true" />
-              <Input value="{batchInfo>/product}" />
+              <Label text="Product Name" />
+              <Input value="{batchInfo>/product}" editable="{path: 'status', targetType: 'any', formatter: '.formatDraftOnly'}" />
 
               <Label text="Dosage Form" />
-              <Select selectedKey="{batchInfo>/dosageForm}">
+              <Select selectedKey="{batchInfo>/dosageForm}" enabled="{path: 'status', targetType: 'any', formatter: '.formatDraftOnly'}">
                 <core:Item key="Tablet" text="Tablet" />
                 <core:Item key="Capsule" text="Capsule" />
                 <core:Item key="Liquid" text="Liquid" />
@@ -107,17 +105,19 @@
                 <core:Item key="Other" text="Other" />
               </Select>
 
-              <Label text="Manufacturing Date" required="true" />
-              <DatePicker value="{batchInfo>/mfgDate}" valueFormat="yyyy-MM-dd" displayFormat="dd.MM.yyyy" />
+              <Label text="Manufacturing Date" />
+              <DatePicker value="{batchInfo>/mfgDate}" valueFormat="yyyy-MM-dd" displayFormat="dd.MM.yyyy"
+                editable="{path: 'status', targetType: 'any', formatter: '.formatDraftOnly'}" />
 
-              <Label text="Expiry Date" required="true" />
-              <DatePicker value="{batchInfo>/expDate}" valueFormat="yyyy-MM-dd" displayFormat="dd.MM.yyyy" />
+              <Label text="Expiry Date" />
+              <DatePicker value="{batchInfo>/expDate}" valueFormat="yyyy-MM-dd" displayFormat="dd.MM.yyyy"
+                editable="{path: 'status', targetType: 'any', formatter: '.formatDraftOnly'}" />
 
-              <Label text="Quantity" required="true" />
-              <Input value="{batchInfo>/quantity}" type="Number" />
+              <Label text="Quantity" />
+              <Input value="{batchInfo>/quantity}" type="Number" editable="{path: 'status', targetType: 'any', formatter: '.formatDraftOnly'}" />
 
               <Label text="Unit" />
-              <Select selectedKey="{batchInfo>/unit}">
+              <Select selectedKey="{batchInfo>/unit}" enabled="{path: 'status', targetType: 'any', formatter: '.formatDraftOnly'}">
                 <core:Item key="pcs" text="pcs" />
                 <core:Item key="kg" text="kg" />
                 <core:Item key="g" text="g" />
@@ -126,47 +126,21 @@
               </Select>
 
               <Label text="Storage Conditions" />
-              <TextArea value="{batchInfo>/storageConditions}" rows="2" />
+              <TextArea value="{batchInfo>/storageConditions}" rows="2" editable="{path: 'status', targetType: 'any', formatter: '.formatDraftOnly'}" />
             </form:SimpleForm>
 
-            <Toolbar visible="{path: 'status', formatter: '.formatDraftOnly'}">
+            <Toolbar visible="{path: 'status', targetType: 'any', formatter: '.formatDraftOnly'}">
               <ToolbarSpacer />
               <Button text="Save Batch Info" icon="sap-icon://save" type="Emphasized"
                 press="onSaveBatchInfo" />
             </Toolbar>
-
-            <!-- Read-only form for non-DRAFT batches -->
-            <form:SimpleForm id="batchInfoFormReadOnly"
-              visible="{path: 'status', formatter: '.formatNonDraft'}"
-              editable="false" layout="ResponsiveGridLayout"
-              labelSpanXL="4" labelSpanL="4" labelSpanM="4"
-              columnsXL="1" columnsL="1" columnsM="1">
-
-              <Label text="Product Name" />
-              <Text text="{batchInfo>/product}" />
-
-              <Label text="Dosage Form" />
-              <Text text="{batchInfo>/dosageForm}" />
-
-              <Label text="Manufacturing Date" />
-              <Text text="{batchInfo>/mfgDate}" />
-
-              <Label text="Expiry Date" />
-              <Text text="{batchInfo>/expDate}" />
-
-              <Label text="Quantity" />
-              <Text text="{= ${batchInfo>/quantity} + ' ' + ${batchInfo>/unit}}" />
-
-              <Label text="Storage Conditions" />
-              <Text text="{batchInfo>/storageConditions}" />
-            </form:SimpleForm>
 
           </layout:VerticalLayout>
         </IconTabFilter>
 
         <!-- Events Tab -->
         <IconTabFilter text="Proof Events" icon="sap-icon://history" count="{proofEvents/$count}" key="events">
-          <Table id="proofEventsTable" updateFinished="onProofEventsUpdated" items="{
+          <Table id="proofEventsTable" items="{
             path: 'proofEvents',
             parameters: { $orderby: 'createdAt desc' }
           }">
@@ -191,7 +165,7 @@
                     enabled="{= !!${onChainTxHash}}"/>
                   <Text text="{path: 'createdAt', formatter: '.formatTimestamp'}"/>
                   <Button text="Retry" icon="sap-icon://refresh" type="Reject"
-                    press="onRetry"/>
+                    press="onRetry" visible="{path: 'status', targetType: 'any', formatter: '.formatRetryVisible'}"/>
                 </cells>
               </ColumnListItem>
             </items>

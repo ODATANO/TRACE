@@ -1,3 +1,12 @@
+.welcomeScreen,
+.welcomeScreen > div {
+  background: linear-gradient(180deg, #f5f7fa 0%, #e8edf3 100%);
+  min-height: 100vh;
+}
+.walletIcon img {
+  object-fit: contain;
+  border-radius: 6px;
+}
 .traceShellBar {
   background-color: var(--sapShellColor, #354a5f);
 }

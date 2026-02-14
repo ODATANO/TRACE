@@ -9,46 +9,138 @@
       <Button icon="sap-icon://refresh" press="onRefresh" tooltip="Refresh"/>
     </headerContent>
 
-    <List id="batchTable"
-      items="{
-        path: '/Batches',
-        parameters: {
-          $expand: 'manufacturer,currentHolder',
-          $orderby: 'modifiedAt desc'
-        }
-      }"
-      growing="true"
-      growingThreshold="50"
-      mode="SingleSelectMaster"
-      itemPress="onBatchPress">
+    <subHeader>
+      <OverflowToolbar>
+        <SearchField width="20rem" liveChange="onSearch" placeholder="Search by batch number or product..."/>
+      </OverflowToolbar>
+    </subHeader>
 
-      <headerToolbar>
-        <OverflowToolbar>
-          <Title text="All Batches" level="H3"/>
-          <ToolbarSpacer/>
-          <SearchField width="20rem" liveChange="onSearch" placeholder="Search by batch number or product..."/>
-        </OverflowToolbar>
-      </headerToolbar>
-
+    <IconTabBar id="batchIconTabBar" select="onTabSelect" selectedKey="all">
       <items>
-        <ObjectListItem
-          type="Navigation"
-          title="{batchNumber}"
-          number="{status}"
-          numberState="{path: 'status', formatter: '.formatStatusState'}"
-          intro="{product}"
-          icon="{path: 'status', formatter: '.formatStatusIcon'}">
-          <attributes>
-            <ObjectAttribute title="Manufacturer" text="{manufacturer/name}" />
-            <ObjectAttribute title="Current Holder" text="{currentHolder/name}" />
-            <ObjectAttribute title="Modified" text="{
-              path: 'modifiedAt',
-              type: 'sap.ui.model.type.DateTime',
-              formatOptions: { style: 'medium' }
-            }" />
-          </attributes>
-        </ObjectListItem>
+
+        <!-- Tab 1: All Batches -->
+        <IconTabFilter text="All" icon="sap-icon://list" key="all"
+          count="{viewModel>/allCount}">
+          <List id="batchTableAll"
+            items="{
+              path: '/Batches',
+              parameters: {
+                $expand: 'manufacturer,currentHolder',
+                $orderby: 'modifiedAt desc',
+                $count: true
+              }
+            }"
+            growing="true"
+            growingThreshold="50"
+            mode="SingleSelectMaster"
+            itemPress="onBatchPress"
+            updateFinished="onListUpdateFinished"
+            noDataText="No batches found.">
+            <items>
+              <ObjectListItem
+                type="Navigation"
+                title="{batchNumber}"
+                number="{status}"
+                numberState="{path: 'status', formatter: '.formatStatusState'}"
+                intro="{product}"
+                icon="{path: 'status', formatter: '.formatStatusIcon'}">
+                <attributes>
+                  <ObjectAttribute title="Manufacturer" text="{manufacturer/name}" />
+                  <ObjectAttribute title="Current Holder" text="{currentHolder/name}" />
+                  <ObjectAttribute title="Modified" text="{
+                    path: 'modifiedAt',
+                    type: 'sap.ui.model.type.DateTime',
+                    formatOptions: { style: 'medium' }
+                  }" />
+                </attributes>
+              </ObjectListItem>
+            </items>
+          </List>
+        </IconTabFilter>
+
+        <!-- Tab 2: My Batches -->
+        <IconTabFilter text="My Batches" icon="sap-icon://factory" key="mine"
+          count="{viewModel>/mineCount}"
+          enabled="{path: 'wallet>/participantId', formatter: '.formatHasParticipant'}">
+          <List id="batchTableMine"
+            items="{
+              path: '/Batches',
+              parameters: {
+                $expand: 'manufacturer,currentHolder',
+                $orderby: 'modifiedAt desc',
+                $count: true
+              }
+            }"
+            growing="true"
+            growingThreshold="50"
+            mode="SingleSelectMaster"
+            itemPress="onBatchPress"
+            updateFinished="onListUpdateFinished"
+            noDataText="No batches minted by this wallet.">
+            <items>
+              <ObjectListItem
+                type="Navigation"
+                title="{batchNumber}"
+                number="{status}"
+                numberState="{path: 'status', formatter: '.formatStatusState'}"
+                intro="{product}"
+                icon="{path: 'status', formatter: '.formatStatusIcon'}">
+                <attributes>
+                  <ObjectAttribute title="Current Holder" text="{currentHolder/name}" />
+                  <ObjectAttribute title="Status" text="{status}" />
+                  <ObjectAttribute title="Modified" text="{
+                    path: 'modifiedAt',
+                    type: 'sap.ui.model.type.DateTime',
+                    formatOptions: { style: 'medium' }
+                  }" />
+                </attributes>
+              </ObjectListItem>
+            </items>
+          </List>
+        </IconTabFilter>
+
+        <!-- Tab 3: Incoming Transfers -->
+        <IconTabFilter text="Incoming" icon="sap-icon://inbox" key="incoming"
+          count="{viewModel>/incomingCount}"
+          enabled="{path: 'wallet>/participantId', formatter: '.formatHasParticipant'}">
+          <List id="batchTableIncoming"
+            items="{
+              path: '/Batches',
+              parameters: {
+                $expand: 'manufacturer,currentHolder',
+                $orderby: 'modifiedAt desc',
+                $count: true
+              }
+            }"
+            growing="true"
+            growingThreshold="50"
+            mode="SingleSelectMaster"
+            itemPress="onBatchPress"
+            updateFinished="onListUpdateFinished"
+            noDataText="No incoming transfers.">
+            <items>
+              <ObjectListItem
+                type="Navigation"
+                title="{batchNumber}"
+                number="IN_TRANSIT"
+                numberState="Warning"
+                intro="{product}"
+                icon="sap-icon://inbox">
+                <attributes>
+                  <ObjectAttribute title="Manufacturer" text="{manufacturer/name}" />
+                  <ObjectAttribute title="Action required" text="Confirm receipt or transfer further" />
+                  <ObjectAttribute title="Modified" text="{
+                    path: 'modifiedAt',
+                    type: 'sap.ui.model.type.DateTime',
+                    formatOptions: { style: 'medium' }
+                  }" />
+                </attributes>
+              </ObjectListItem>
+            </items>
+          </List>
+        </IconTabFilter>
+
       </items>
-    </List>
+    </IconTabBar>
   </Page>
 </mvc:View>

@@ -170,6 +170,11 @@ sap.ui.define([
       var oContext = this.getView().getBindingContext();
       if (!oContext) return;
 
+      if (oContext.getProperty("status") !== "DRAFT") {
+        MessageBox.error("Batch info can only be edited while in DRAFT status.");
+        return;
+      }
+
       var oInfo = this.getView().getModel("batchInfo").getData();
 
       if (!oInfo.product) {
@@ -282,21 +287,6 @@ sap.ui.define([
             MessageBox.error("Transaction failed: " + (err.message || err));
           }
         });
-    },
-
-    // --- Table update handler ---
-
-    onProofEventsUpdated: function () {
-      var oTable = this.byId("proofEventsTable");
-      if (!oTable) return;
-      oTable.getItems().forEach(function (oItem) {
-        var oCells = oItem.getCells();
-        if (oCells && oCells.length > 5) {
-          var oBtn = oCells[5]; // Retry button is the 6th cell
-          var sStatus = oItem.getBindingContext().getProperty("status");
-          oBtn.setVisible(sStatus === "FAILED");
-        }
-      });
     },
 
     // --- Action Handlers ---

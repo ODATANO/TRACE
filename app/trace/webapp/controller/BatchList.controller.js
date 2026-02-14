@@ -12,6 +12,126 @@ sap.ui.define([
 
   return Controller.extend("trace.controller.BatchList", {
 
+    onInit: function () {
+      // Local view model for tab counts and search state
+      this.getView().setModel(new JSONModel({
+        allCount: 0,
+        mineCount: 0,
+        incomingCount: 0,
+        searchQuery: ""
+      }), "viewModel");
+
+      // Suspend wallet-gated list bindings until participantId is available
+      var that = this;
+      this.getView().attachAfterRendering(function () {
+        that._suspendList("batchTableMine");
+        that._suspendList("batchTableIncoming");
+      });
+
+      // Watch for wallet participantId changes to apply/refresh filters
+      this.getOwnerComponent().getModel("wallet")
+        .attachPropertyChange(this._onWalletChanged.bind(this));
+
+      // Re-apply filters when navigating back to this page
+      this.getOwnerComponent().getRouter()
+        .getRoute("batches")
+        .attachPatternMatched(this._onRouteMatched, this);
+    },
+
+    _onRouteMatched: function () {
+      this._applyTabFilters();
+    },
+
+    _onWalletChanged: function () {
+      // Debounce since multiple properties change at once on connect/disconnect
+      clearTimeout(this._walletChangeTimer);
+      this._walletChangeTimer = setTimeout(this._applyTabFilters.bind(this), 100);
+    },
+
+    // ---- Filter Logic ----
+
+    _applyTabFilters: function () {
+      var oWalletModel = this.getOwnerComponent().getModel("wallet");
+      var sParticipantId = oWalletModel.getProperty("/participantId");
+      var sSearchQuery = this.getView().getModel("viewModel").getProperty("/searchQuery");
+
+      // Tab: All — search filter only
+      this._applyFilterToList("batchTableAll", [], sSearchQuery);
+
+      // Tab: My Batches
+      if (sParticipantId) {
+        this._applyFilterToList("batchTableMine", [
+          new Filter("manufacturer_ID", FilterOperator.EQ, sParticipantId)
+        ], sSearchQuery);
+      } else {
+        this._suspendList("batchTableMine");
+      }
+
+      // Tab: Incoming Transfers
+      if (sParticipantId) {
+        this._applyFilterToList("batchTableIncoming", [
+          new Filter("currentHolder_ID", FilterOperator.EQ, sParticipantId),
+          new Filter("status", FilterOperator.EQ, "IN_TRANSIT")
+        ], sSearchQuery);
+      } else {
+        this._suspendList("batchTableIncoming");
+      }
+
+      // If wallet disconnected and on a wallet-gated tab, switch back to "all"
+      if (!sParticipantId) {
+        var oTabBar = this.byId("batchIconTabBar");
+        if (oTabBar && oTabBar.getSelectedKey() !== "all") {
+          oTabBar.setSelectedKey("all");
+        }
+      }
+    },
+
+    _applyFilterToList: function (sListId, aTabFilters, sSearchQuery) {
+      var oList = this.byId(sListId);
+      if (!oList) { return; }
+
+      var oBinding = oList.getBinding("items");
+      if (!oBinding) { return; }
+
+      var aFilters = aTabFilters.slice();
+      if (sSearchQuery) {
+        aFilters.push(new Filter({
+          filters: [
+            new Filter("batchNumber", FilterOperator.Contains, sSearchQuery),
+            new Filter("product", FilterOperator.Contains, sSearchQuery)
+          ],
+          and: false
+        }));
+      }
+
+      if (oBinding.isSuspended()) {
+        oBinding.resume();
+      }
+      oBinding.filter(aFilters);
+    },
+
+    _suspendList: function (sListId) {
+      var oList = this.byId(sListId);
+      if (!oList) { return; }
+
+      var oBinding = oList.getBinding("items");
+      if (oBinding && !oBinding.isSuspended()) {
+        oBinding.suspend();
+      }
+    },
+
+    _buildSearchFilter: function (sQuery) {
+      return new Filter({
+        filters: [
+          new Filter("batchNumber", FilterOperator.Contains, sQuery),
+          new Filter("product", FilterOperator.Contains, sQuery)
+        ],
+        and: false
+      });
+    },
+
+    // ---- Formatters ----
+
     formatStatusState: function (sStatus) {
       switch (sStatus) {
         case "DRAFT":      return "None";
@@ -34,6 +154,18 @@ sap.ui.define([
       }
     },
 
+    formatHasParticipant: function (sParticipantId) {
+      return !!sParticipantId;
+    },
+
+    // ---- Event Handlers ----
+
+    onTabSelect: function (oEvent) {
+      var sKey = oEvent.getParameter("key");
+      // Re-apply filters for the newly selected tab (ensures resume if suspended)
+      this._applyTabFilters();
+    },
+
     onBatchPress: function (oEvent) {
       var oItem = oEvent.getParameter("listItem") || oEvent.getSource();
       var sBatchId = oItem.getBindingContext().getProperty("ID");
@@ -42,23 +174,40 @@ sap.ui.define([
 
     onSearch: function (oEvent) {
       var sQuery = oEvent.getParameter("newValue");
-      var aFilters = [];
-      if (sQuery) {
-        aFilters.push(new Filter({
-          filters: [
-            new Filter("batchNumber", FilterOperator.Contains, sQuery),
-            new Filter("product", FilterOperator.Contains, sQuery)
-          ],
-          and: false
-        }));
-      }
-      this.byId("batchTable").getBinding("items").filter(aFilters);
+      this.getView().getModel("viewModel").setProperty("/searchQuery", sQuery);
+      this._applyTabFilters();
     },
 
     onRefresh: function () {
-      this.byId("batchTable").getBinding("items").refresh();
+      // Refresh all non-suspended lists
+      ["batchTableAll", "batchTableMine", "batchTableIncoming"].forEach(function (sId) {
+        var oList = this.byId(sId);
+        if (oList) {
+          var oBinding = oList.getBinding("items");
+          if (oBinding && !oBinding.isSuspended()) {
+            oBinding.refresh();
+          }
+        }
+      }.bind(this));
       MessageToast.show("Refreshed");
     },
+
+    onListUpdateFinished: function (oEvent) {
+      var oSource = oEvent.getSource();
+      var iTotal = oEvent.getParameter("total") || 0;
+      var sId = oSource.getId();
+      var oViewModel = this.getView().getModel("viewModel");
+
+      if (sId.indexOf("batchTableAll") > -1) {
+        oViewModel.setProperty("/allCount", iTotal);
+      } else if (sId.indexOf("batchTableMine") > -1) {
+        oViewModel.setProperty("/mineCount", iTotal);
+      } else if (sId.indexOf("batchTableIncoming") > -1) {
+        oViewModel.setProperty("/incomingCount", iTotal);
+      }
+    },
+
+    // ---- Batch Creation ----
 
     onCreateBatch: function () {
       var that = this;
@@ -132,10 +281,9 @@ sap.ui.define([
 
       // Try to auto-set manufacturer from connected wallet
       var that = this;
-      var oModel = this.getView().getModel();
 
       this._resolveManufacturer().then(function (sParticipantId) {
-        var oListBinding = that.byId("batchTable").getBinding("items");
+        var oListBinding = that.byId("batchTableAll").getBinding("items");
 
         var oEntry = {
           batchNumber: oData.batchNumber,
@@ -164,7 +312,7 @@ sap.ui.define([
 
       }).catch(function () {
         // No wallet or no matching participant — create without manufacturer
-        var oListBinding = that.byId("batchTable").getBinding("items");
+        var oListBinding = that.byId("batchTableAll").getBinding("items");
 
         var oContext = oListBinding.create({
           batchNumber: oData.batchNumber,

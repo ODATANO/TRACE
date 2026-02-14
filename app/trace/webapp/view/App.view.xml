@@ -2,36 +2,80 @@
   controllerName="trace.controller.App"
   xmlns:mvc="sap.ui.core.mvc"
   xmlns="sap.m"
+  xmlns:core="sap.ui.core"
   xmlns:f="sap.f"
   xmlns:tnt="sap.tnt"
   height="100%">
 
-  <tnt:ToolPage id="toolPage">
-    <tnt:header>
-      <tnt:ToolHeader>
-        <Button icon="sap-icon://menu2" press="onToggleMenu" type="Transparent"/>
-        <Title text="TRACE" level="H4" class="sapUiSmallMarginBegin"/>
-        <ToolbarSpacer/>
-        <Button id="walletBtn"
-          text="{= ${wallet>/connected} ? ${wallet>/name} : 'Connect Wallet'}"
-          icon="{= ${wallet>/connected} ? 'sap-icon://chain-link' : 'sap-icon://disconnected'}"
-          type="{= ${wallet>/connected} ? 'Success' : 'Default'}"
-          press="onWalletPress"/>
-      </tnt:ToolHeader>
-    </tnt:header>
+  <App id="rootApp" height="100%">
 
-    <tnt:sideContent>
-      <tnt:SideNavigation id="sideNav" selectedKey="batches" itemSelect="onNavSelect">
-        <tnt:NavigationList>
-          <tnt:NavigationListItem text="Batches" icon="sap-icon://shipping-status" key="batches"/>
-          <tnt:NavigationListItem text="Participants" icon="sap-icon://group" key="participants"/>
-          <tnt:NavigationListItem text="Verify" icon="sap-icon://accept" key="verify"/>
-        </tnt:NavigationList>
-      </tnt:SideNavigation>
-    </tnt:sideContent>
+    <!-- Welcome Screen (initial page) -->
+    <Page id="welcomePage" showHeader="false" class="welcomeScreen">
+      <VBox alignItems="Center" class="sapUiMediumMarginTop">
 
-    <tnt:mainContents>
-      <NavContainer id="appNavContainer"/>
-    </tnt:mainContents>
-  </tnt:ToolPage>
+        <Image src="odatano_trace_logo.svg" width="600px" class="sapUiTinyMarginBottom"/>
+
+        <Title text="Connect a Cardano Wallet to get started" level="H3"
+               class="sapUiMediumMarginTop sapUiTinyMarginBottom"/>
+
+        <BusyIndicator text="Connecting to wallet..."
+                       visible="{wallet>/connecting}"
+                       class="sapUiSmallMarginTop"/>
+
+        <MessageStrip text="{wallet>/error}" type="Error" showIcon="true"
+                      showCloseButton="true"
+                      visible="{= !!${wallet>/error}}"
+                      class="sapUiSmallMarginTop"/>
+
+        <List id="welcomeWalletList"
+              items="{wallet>/wallets}"
+              mode="SingleSelectMaster"
+              selectionChange=".onWelcomeWalletSelect"
+              visible="{= !${wallet>/connecting}}"
+              noDataText="No Cardano wallets detected. Install Nami, Eternl, or Lace."
+              width="550px">
+          <CustomListItem type="Active">
+            <HBox alignItems="Center" class="sapUiSmallMargin">
+              <Image src="{wallet>icon}" width="32px" height="32px"
+                     class="sapUiSmallMarginEnd walletIcon"
+                     visible="{= !!${wallet>icon}}"/>
+              <Text text="{wallet>name}" class="sapMTextBold"/>
+            </HBox>
+          </CustomListItem>
+        </List>
+
+      </VBox>
+    </Page>
+
+    <!-- Main App -->
+    <tnt:ToolPage id="toolPage">
+      <tnt:header>
+        <tnt:ToolHeader>
+          <Button icon="sap-icon://menu2" press="onToggleMenu" type="Transparent"/>
+          <Title text="TRACE" level="H4" class="sapUiSmallMarginBegin"/>
+          <ToolbarSpacer/>
+          <Button id="walletBtn"
+            text="{wallet>/name}"
+            icon="sap-icon://chain-link"
+            type="Success"
+            press="onWalletPress"/>
+        </tnt:ToolHeader>
+      </tnt:header>
+
+      <tnt:sideContent>
+        <tnt:SideNavigation id="sideNav" selectedKey="batches" itemSelect="onNavSelect">
+          <tnt:NavigationList>
+            <tnt:NavigationListItem text="Batches" icon="sap-icon://shipping-status" key="batches"/>
+            <tnt:NavigationListItem text="Participants" icon="sap-icon://group" key="participants"/>
+            <tnt:NavigationListItem text="Verify" icon="sap-icon://accept" key="verify"/>
+          </tnt:NavigationList>
+        </tnt:SideNavigation>
+      </tnt:sideContent>
+
+      <tnt:mainContents>
+        <NavContainer id="appNavContainer"/>
+      </tnt:mainContents>
+    </tnt:ToolPage>
+
+  </App>
 </mvc:View>
