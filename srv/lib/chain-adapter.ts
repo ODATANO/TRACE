@@ -255,7 +255,7 @@ export async function createSigningRequest(buildId: string): Promise<SigningRequ
 
 /**
  * Submit a CIP-30 wallet witness set for a previously built transaction.
- * Uses ODATANO's SubmitVerifiedTransaction which merges witnesses correctly (v0.3.9+).
+ * Uses ODATANO's SubmitVerifiedTransaction, which re-builds the transaction and compares the tx body hash before submitting.
  */
 export async function submitSigned(signingRequestId: string, walletWitnessCbor: string): Promise<SubmitResult> {
   const srv = await txSrv();

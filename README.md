@@ -1,35 +1,13 @@
-![alt text](image.png)
-
+![alt text](assets/image.png)
 # TRACE - Pharmaceutical Supply Chain tracking on Cardano
 
 TRACE is Example SAP FIORI Application for a pharmaceutical supply chain tracking system built on [SAP CAP](https://cap.cloud.sap/) and the [Cardano](https://cardano.org/) blockchain. It provides tamper-proof chain-of-custody for drug batches from manufacturer to pharmacy, using NFTs as on-chain proof and CIP-30 browser wallets for transaction signing.
 
-**Blockchain integration via [ODATANO](https://github.com/ODATANO/ODATANO)** — a CAP plugin that exposes Cardano as OData V4 services. TRACE never calls Blockfrost/Koios directly.
+**Blockchain integration via [ODATANO](https://github.com/ODATANO/ODATANO)** — a CAP plugin that exposes Cardano as OData V4 services. 
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────┐
-│  Browser                                                │
-│  ┌──────────────┐  ┌──────────────┐                     │
-│  │ SAPUI5 App   │  │ CIP-30       │                     │
-│  │ (Fiori UX)   │──│ Wallet       │ (Nami/Eternl/Lace)  │
-│  └──────┬───────┘  └──────┬───────┘                     │
-└─────────┼─────────────────┼─────────────────────────────┘
-          │ OData V4        │ signTx(cbor)
-┌─────────┼─────────────────┼─────────────────────────────┐
-│  SAP CAP Server           │                             │
-│  ┌──────┴───────┐  ┌──────┴───────┐  ┌───────────────┐  │
-│  │ TraceService │──│ ChainAdapter │──│ ODATANO Plugin│  │
-│  │ (8 actions)  │  │              │  │               │  │
-│  └──────┬───────┘  └──────────────┘  └───────┬───────┘  │
-│         │                                    │          │
-│  ┌──────┴───────┐                    ┌───────┴───────┐  │
-│  │ SQLite DB    │                    │    Cardano    │  │
-│  │ (5 entities) │                    │    Preview    │  │
-│  └──────────────┘                    └───────────────┘  │
-└─────────────────────────────────────────────────────────┘
-```
+![alt text](assets/odatano-trace-ad.png)
 
 ## Tech Stack
 
