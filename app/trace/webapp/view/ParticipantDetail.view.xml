@@ -3,6 +3,7 @@
   xmlns:mvc="sap.ui.core.mvc"
   xmlns="sap.m"
   xmlns:layout="sap.ui.layout"
+  xmlns:form="sap.ui.layout.form"
   xmlns:core="sap.ui.core">
 
   <Page id="participantDetailPage"
@@ -22,13 +23,13 @@
     </ObjectHeader>
 
     <Panel headerText="Cardano Identity" class="sapUiSmallMargin">
-      <layout:form.SimpleForm editable="false" layout="ResponsiveGridLayout"
+      <form:SimpleForm editable="false" layout="ResponsiveGridLayout"
         labelSpanXL="3" labelSpanL="3" labelSpanM="4">
         <Label text="Bech32 Address"/>
         <Text text="{address}" wrapping="true"/>
         <Label text="Verification Key Hash"/>
         <Text text="{vkh}"/>
-      </layout:form.SimpleForm>
+      </form:SimpleForm>
     </Panel>
 
     <Panel headerText="Current Batches" class="sapUiSmallMargin">

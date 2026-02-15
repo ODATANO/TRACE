@@ -3,6 +3,7 @@
   xmlns:mvc="sap.ui.core.mvc"
   xmlns="sap.m"
   xmlns:layout="sap.ui.layout"
+  xmlns:form="sap.ui.layout.form"
   xmlns:core="sap.ui.core">
 
   <Page title="Verify Batch" id="verifyPage">
@@ -24,14 +25,14 @@
           <ObjectStatus id="validityStatus" text="" state="None" class="sapUiMediumMarginEnd"/>
           <ObjectStatus id="onChainStatus" text="" state="None"/>
         </HBox>
-        <layout:form.SimpleForm editable="false" layout="ResponsiveGridLayout" labelSpanL="3" labelSpanM="4">
+        <form:SimpleForm editable="false" layout="ResponsiveGridLayout" labelSpanL="3" labelSpanM="4">
           <Label text="Fingerprint"/>
           <Text id="verifyFingerprint"/>
           <Label text="Current Holder (vkh)"/>
           <Text id="verifyHolder"/>
           <Label text="Custody Step"/>
           <Text id="verifyStep"/>
-        </layout:form.SimpleForm>
+        </form:SimpleForm>
       </Panel>
 
       <!-- Custody Steps Timeline -->
