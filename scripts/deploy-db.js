@@ -25,7 +25,8 @@ async function main() {
   const odatanoCSN = await cds.load([
     'node_modules/@odatano/core/db/schema.cds',
     'node_modules/@odatano/core/srv/cardano-service.cds',
-    'node_modules/@odatano/core/srv/cardano-tx-service.cds'
+    'node_modules/@odatano/core/srv/cardano-tx-service.cds',
+    'node_modules/@odatano/core/srv/cardano-sign-service.cds'
   ]);
   const odatanoSQL = cds.compile(odatanoCSN).to.sql({ dialect: 'sqlite' });
 

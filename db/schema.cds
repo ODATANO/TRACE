@@ -7,6 +7,15 @@ entity Participants {
   address       : String(120); // Cardano bech32 address (for ODATANO tx building)
   vkh           : String(56);  // Cardano verification key hash (hex, 28 bytes)
   isActive      : Boolean default true;
+  // --- Registration on-chain tracking ---
+  registrationStatus           : String enum { NONE; PENDING; SUBMITTED; CONFIRMED; FAILED } default 'NONE';
+  registrationPolicyId         : String(56);
+  registrationTxHash           : String(64);
+  registrationBuildId          : String(36);
+  registrationSigningRequestId : String(36);
+  registrationSubmissionId     : String(36);
+  registrationErrorMessage     : String(500);
+  registeredAt                 : Timestamp;
 }
 
 entity Batches {

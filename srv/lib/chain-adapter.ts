@@ -62,6 +62,24 @@ export interface SubmissionStatus {
   errorMessage: string | null;
 }
 
+export interface RegisterParams {
+  senderAddress: string;
+  registrantVkh: string;
+}
+
+export interface RegisterForOtherParams {
+  senderAddress: string;    // current user's wallet (pays fee, signs)
+  senderVkh: string;        // current user's VKH (script param + required signer)
+  recipientAddress: string; // new participant's wallet (receives NFT)
+}
+
+export interface RegisterResult {
+  buildId: string;
+  unsignedCbor: string;
+  txBodyHash: string;
+  policyId: string;
+}
+
 export interface AnchorParams {
   senderAddress: string;
   documentHash: string;
@@ -86,6 +104,7 @@ export interface TxStatus {
 
 let _txSrv: any;
 let _oDataSrv: any;
+let _signSrv: any;
 
 async function txSrv() {
   if (!_txSrv) _txSrv = await cds.connect.to('CardanoTransactionService');
@@ -95,6 +114,11 @@ async function txSrv() {
 async function oDataSrv() {
   if (!_oDataSrv) _oDataSrv = await cds.connect.to('CardanoODataService');
   return _oDataSrv;
+}
+
+async function signSrv() {
+  if (!_signSrv) _signSrv = await cds.connect.to('CardanoSignService');
+  return _signSrv;
 }
 
 // ---------------------------------------------------------------------------
@@ -161,6 +185,7 @@ export function toHex(str: string): string {
  * enterprise script address automatically. No two-pass build needed.
  */
 export async function mintBatchNft(params: MintParams): Promise<MintResult> {
+
   const srv = await txSrv();
   const validatorHex = getValidatorHex('pharma_trace.pharma_trace.mint');
   const batchIdHex = toHex(params.batchId);
@@ -198,10 +223,77 @@ export async function mintBatchNft(params: MintParams): Promise<MintResult> {
 }
 
 /**
+ * Mint a registration NFT for a new participant.
+ *
+ * Reuses the pharma_trace.pharma_trace.mint validator parameterized with the
+ * registrant's VKH. Each VKH produces a unique policyId, making the
+ * registration NFT (policyId + "REGISTRATION") globally unique.
+ *
+ * NFT goes to the participant's wallet (no lockOnScript, no datum).
+ */
+export async function mintRegistrationNft(params: RegisterParams): Promise<RegisterResult> {
+
+  const srv = await txSrv();
+  const validatorHex = getValidatorHex('pharma_trace.pharma_trace.mint');
+  const assetNameHex = toHex('REGISTRATION');
+
+  const build = await srv.send('BuildMintTransaction', {
+    senderAddress: params.senderAddress,
+    recipientAddress: params.senderAddress,
+    lovelaceAmount: '2000000',
+    mintActionsJson: JSON.stringify([{ assetUnit: assetNameHex, quantity: '1' }]),
+    mintingPolicyScript: validatorHex,
+    scriptParamsJson: JSON.stringify([{ bytes: params.registrantVkh }]),
+    changeAddress: params.senderAddress,
+    requiredSignersJson: JSON.stringify([params.registrantVkh])
+  });
+
+  return {
+    buildId: build.id,
+    unsignedCbor: build.unsignedTxCbor,
+    txBodyHash: build.txBodyHash,
+    policyId: build.scriptHash
+  };
+}
+
+/**
+ * Mint a registration NFT on behalf of another participant.
+ *
+ * The sender (current user) signs and pays, but the NFT is sent to the
+ * recipient's wallet. The validator is parameterized with the sender's VKH
+ * (required signer constraint), so the policyId reflects who issued the NFT.
+ */
+export async function mintRegistrationNftFor(params: RegisterForOtherParams): Promise<RegisterResult> {
+
+  const srv = await txSrv();
+  const validatorHex = getValidatorHex('pharma_trace.pharma_trace.mint');
+  const assetNameHex = toHex('REGISTRATION');
+
+  const build = await srv.send('BuildMintTransaction', {
+    senderAddress: params.senderAddress,
+    recipientAddress: params.recipientAddress,
+    lovelaceAmount: '2000000',
+    mintActionsJson: JSON.stringify([{ assetUnit: assetNameHex, quantity: '1' }]),
+    mintingPolicyScript: validatorHex,
+    scriptParamsJson: JSON.stringify([{ bytes: params.senderVkh }]),
+    changeAddress: params.senderAddress,
+    requiredSignersJson: JSON.stringify([params.senderVkh])
+  });
+
+  return {
+    buildId: build.id,
+    unsignedCbor: build.unsignedTxCbor,
+    txBodyHash: build.txBodyHash,
+    policyId: build.scriptHash
+  };
+}
+
+/**
  * Build a spend transaction to transfer batch custody.
  * Uses ODATANO v0.3.12 `lockOnScript` to re-lock the NFT at the script address.
  */
 export async function transferBatch(params: TransferParams): Promise<TransferResult> {
+
   const srv = await txSrv();
   const validatorHex = getValidatorHex('pharma_trace.pharma_trace.spend');
 
@@ -244,7 +336,7 @@ export async function transferBatch(params: TransferParams): Promise<TransferRes
  * Create a signing request for external (CIP-30) signing.
  */
 export async function createSigningRequest(buildId: string): Promise<SigningRequestResult> {
-  const srv = await txSrv();
+  const srv = await signSrv();
   const result = await srv.send('CreateSigningRequest', { buildId });
   return {
     signingRequestId: result.id,
@@ -258,12 +350,11 @@ export async function createSigningRequest(buildId: string): Promise<SigningRequ
  * Uses ODATANO's SubmitVerifiedTransaction, which re-builds the transaction and compares the tx body hash before submitting.
  */
 export async function submitSigned(signingRequestId: string, walletWitnessCbor: string): Promise<SubmitResult> {
-  const srv = await txSrv();
+  const srv = await signSrv();
 
-  const result = await srv.send({
-    event: 'SubmitVerifiedTransaction',
-    data: { signedTxCbor: walletWitnessCbor },
-    params: [{ id: signingRequestId }]
+  const result = await srv.send('SubmitVerifiedTransaction', {
+    signingRequestId,
+    signedTxCbor: walletWitnessCbor
   });
   return {
     txHash: result.txHash,
@@ -301,6 +392,7 @@ export async function checkSubmissionStatus(submissionId: string): Promise<Submi
  * Build a metadata transaction to anchor a document hash on-chain.
  */
 export async function anchorDocument(params: AnchorParams): Promise<AnchorResult> {
+
   const srv = await txSrv();
   const build = await srv.send('BuildTransactionWithMetadata', {
     senderAddress: params.senderAddress,
@@ -315,6 +407,17 @@ export async function anchorDocument(params: AnchorParams): Promise<AnchorResult
     unsignedCbor: build.unsignedTxCbor,
     txBodyHash: build.txBodyHash
   };
+}
+
+/**
+ * Query all native assets at a wallet address via ODATANO.
+ * Triggers address indexing first (lazy on-demand), then queries assets.
+ */
+export async function getWalletAssets(walletAddress: string): Promise<any[]> {
+  const srv = await oDataSrv();
+  // Trigger address indexing — GetAddressByBech32 fetches from blockchain on cache miss
+  await srv.send('GetAddressByBech32', { address: walletAddress });
+  return srv.send('GetAssetsByAddress', { address: walletAddress });
 }
 
 /**

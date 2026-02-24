@@ -22,10 +22,27 @@ export default class TraceService extends cds.ApplicationService {
       const batch = await SELECT.one.from(Batches).where({ ID: batchId });
 
       if (!batch) return req.reject(404, `Batch ${batchId} not found`);
-      if (batch.status !== 'DRAFT') return req.reject(409, `Batch status must be DRAFT, is ${batch.status}`);
 
+      // Allow retry: only block if asset is confirmed on-chain (has UTxO ref)
       const existingAsset = await SELECT.one.from(OnChainAssets).where({ batch_ID: batchId });
-      if (existingAsset) return req.reject(409, `Batch already has an on-chain asset`);
+      if (existingAsset && existingAsset.currentUtxoRef) {
+        return req.reject(409, `Batch already has a confirmed on-chain asset`);
+      }
+
+      // Clean up stale data from failed/cancelled previous attempt
+      if (existingAsset) {
+        await DELETE.from(OnChainAssets).where({ batch_ID: batchId });
+        // Mark old PENDING mint events as FAILED
+        await UPDATE(ProofEvents)
+          .set({ status: 'FAILED', errorMessage: 'Superseded by retry' })
+          .where({ batch_ID: batchId, eventType: 'MINT', status: 'PENDING' });
+        // Reset batch status back to DRAFT for the retry
+        await UPDATE(Batches).set({ status: 'DRAFT' }).where({ ID: batchId });
+      }
+
+      if (batch.status !== 'DRAFT' && !existingAsset) {
+        return req.reject(409, `Batch status must be DRAFT, is ${batch.status}`);
+      }
 
       const digest = batch.originPayload
         ? computeDigest(JSON.parse(batch.originPayload))
@@ -215,6 +232,19 @@ export default class TraceService extends cds.ApplicationService {
           .where({ ID: pendingAnchor.ID });
       }
 
+      // Also update any Participant registration linked to this signingRequestId
+      const pendingRegistration = await SELECT.one.from(Participants)
+        .where({ registrationSigningRequestId: signingRequestId, registrationStatus: 'PENDING' });
+      if (pendingRegistration) {
+        await UPDATE(Participants)
+          .set({
+            registrationTxHash: result.txHash,
+            registrationSubmissionId: result.submissionId,
+            registrationStatus: 'SUBMITTED'
+          })
+          .where({ ID: pendingRegistration.ID });
+      }
+
       return {
         txHash: result.txHash,
         submissionId: result.submissionId,
@@ -267,8 +297,39 @@ export default class TraceService extends cds.ApplicationService {
         }
       }
 
-      LOG.info(`Checked ${submitted.length} submissions: ${confirmed} confirmed, ${failed} failed`);
-      return { checked: submitted.length, confirmed, failed };
+      // Also check SUBMITTED registrations
+      const submittedRegistrations = await SELECT.from(Participants)
+        .where({ registrationStatus: 'SUBMITTED' });
+
+      for (const reg of submittedRegistrations) {
+        if (!reg.registrationSubmissionId) continue;
+
+        const check = await chainAdapter.checkSubmissionStatus(reg.registrationSubmissionId);
+        const now = new Date().toISOString();
+
+        if (check.status === 'confirmed') {
+          await UPDATE(Participants)
+            .set({
+              registrationStatus: 'CONFIRMED',
+              registrationTxHash: check.txHash ?? reg.registrationTxHash,
+              registeredAt: now
+            })
+            .where({ ID: reg.ID });
+          confirmed++;
+        } else if (check.status === 'failed') {
+          await UPDATE(Participants)
+            .set({
+              registrationStatus: 'FAILED',
+              registrationErrorMessage: check.errorMessage
+            })
+            .where({ ID: reg.ID });
+          failed++;
+        }
+      }
+
+      const totalChecked = submitted.length + submittedRegistrations.length;
+      LOG.info(`Checked ${totalChecked} submissions: ${confirmed} confirmed, ${failed} failed`);
+      return { checked: totalChecked, confirmed, failed };
     });
 
     // -----------------------------------------------------------------------
@@ -460,6 +521,242 @@ export default class TraceService extends cds.ApplicationService {
 
       await UPDATE(Batches).set({ status: 'DELIVERED' }).where({ ID: batchId });
       return { status: 'DELIVERED' };
+    });
+
+    // -----------------------------------------------------------------------
+    // RegisterParticipant — self-service registration via on-chain NFT mint
+    // -----------------------------------------------------------------------
+    this.on('RegisterParticipant', async (req) => {
+      const { name, role, walletAddress, walletVkh } =
+        req.data as { name: string; role: string; walletAddress: string; walletVkh: string };
+
+      if (!walletAddress || !walletVkh) return req.reject(400, 'Wallet address and VKH are required (connect wallet first)');
+      if (!name) return req.reject(400, 'Participant name is required');
+      if (!role) return req.reject(400, 'Participant role is required');
+
+      // Check if VKH is already registered
+      const existing = await SELECT.one.from(Participants).where({ vkh: walletVkh });
+      if (existing) {
+        if (existing.registrationStatus === 'CONFIRMED' || existing.registrationStatus === 'SUBMITTED') {
+          return req.reject(409, 'A participant with this wallet VKH already exists');
+        }
+        // PENDING or FAILED — allow re-registration by rebuilding the transaction
+        const result = await chainAdapter.mintRegistrationNft({
+          senderAddress: walletAddress,
+          registrantVkh: walletVkh
+        });
+
+        const signingReq = await chainAdapter.createSigningRequest(result.buildId);
+
+        await UPDATE(Participants).set({
+          name,
+          role,
+          address: walletAddress,
+          registrationStatus: 'PENDING',
+          registrationPolicyId: result.policyId,
+          registrationBuildId: result.buildId,
+          registrationSigningRequestId: signingReq.signingRequestId,
+          registrationSubmissionId: null,
+          registrationTxHash: null,
+          registrationErrorMessage: null
+        }).where({ ID: existing.ID });
+
+        return {
+          participantId: existing.ID,
+          policyId: result.policyId,
+          unsignedCbor: signingReq.unsignedTxCbor,
+          buildId: result.buildId,
+          signingRequestId: signingReq.signingRequestId,
+          txBodyHash: signingReq.txBodyHash
+        };
+      }
+
+      // New registration
+      const result = await chainAdapter.mintRegistrationNft({
+        senderAddress: walletAddress,
+        registrantVkh: walletVkh
+      });
+
+      const signingReq = await chainAdapter.createSigningRequest(result.buildId);
+
+      const participantId = cds.utils.uuid();
+      await INSERT.into(Participants).entries({
+        ID: participantId,
+        name,
+        role,
+        address: walletAddress,
+        vkh: walletVkh,
+        isActive: true,
+        registrationStatus: 'PENDING',
+        registrationPolicyId: result.policyId,
+        registrationBuildId: result.buildId,
+        registrationSigningRequestId: signingReq.signingRequestId
+      });
+
+      return {
+        participantId,
+        policyId: result.policyId,
+        unsignedCbor: signingReq.unsignedTxCbor,
+        buildId: result.buildId,
+        signingRequestId: signingReq.signingRequestId,
+        txBodyHash: signingReq.txBodyHash
+      };
+    });
+
+    // -----------------------------------------------------------------------
+    // AddParticipant — add a participant on behalf, mint registration NFT to their wallet
+    // -----------------------------------------------------------------------
+    this.on('AddParticipant', async (req) => {
+      const { name, role, participantAddress, participantVkh, walletAddress, walletVkh } =
+        req.data as { name: string; role: string; participantAddress: string; participantVkh: string; walletAddress: string; walletVkh: string };
+
+      if (!walletAddress || !walletVkh) return req.reject(400, 'Wallet address and VKH are required (connect wallet first)');
+      if (!name) return req.reject(400, 'Participant name is required');
+      if (!role) return req.reject(400, 'Participant role is required');
+      if (!participantAddress) return req.reject(400, 'Participant Cardano address is required');
+      if (!participantVkh) return req.reject(400, 'Participant VKH is required');
+
+      // Check if VKH is already registered
+      const existing = await SELECT.one.from(Participants).where({ vkh: participantVkh });
+      if (existing) {
+        if (existing.registrationStatus === 'CONFIRMED' || existing.registrationStatus === 'SUBMITTED') {
+          return req.reject(409, 'A participant with this address already exists');
+        }
+        // PENDING or FAILED — allow re-add
+        const result = await chainAdapter.mintRegistrationNftFor({
+          senderAddress: walletAddress,
+          senderVkh: walletVkh,
+          recipientAddress: participantAddress
+        });
+
+        const signingReq = await chainAdapter.createSigningRequest(result.buildId);
+
+        await UPDATE(Participants).set({
+          name,
+          role,
+          address: participantAddress,
+          registrationStatus: 'PENDING',
+          registrationPolicyId: result.policyId,
+          registrationBuildId: result.buildId,
+          registrationSigningRequestId: signingReq.signingRequestId,
+          registrationSubmissionId: null,
+          registrationTxHash: null,
+          registrationErrorMessage: null
+        }).where({ ID: existing.ID });
+
+        return {
+          participantId: existing.ID,
+          policyId: result.policyId,
+          unsignedCbor: signingReq.unsignedTxCbor,
+          buildId: result.buildId,
+          signingRequestId: signingReq.signingRequestId,
+          txBodyHash: signingReq.txBodyHash
+        };
+      }
+
+      // New participant
+      const result = await chainAdapter.mintRegistrationNftFor({
+        senderAddress: walletAddress,
+        senderVkh: walletVkh,
+        recipientAddress: participantAddress
+      });
+
+      const signingReq = await chainAdapter.createSigningRequest(result.buildId);
+
+      const participantId = cds.utils.uuid();
+      await INSERT.into(Participants).entries({
+        ID: participantId,
+        name,
+        role,
+        address: participantAddress,
+        vkh: participantVkh,
+        isActive: true,
+        registrationStatus: 'PENDING',
+        registrationPolicyId: result.policyId,
+        registrationBuildId: result.buildId,
+        registrationSigningRequestId: signingReq.signingRequestId
+      });
+
+      return {
+        participantId,
+        policyId: result.policyId,
+        unsignedCbor: signingReq.unsignedTxCbor,
+        buildId: result.buildId,
+        signingRequestId: signingReq.signingRequestId,
+        txBodyHash: signingReq.txBodyHash
+      };
+    });
+
+    // -----------------------------------------------------------------------
+    // ResolveWallet — resolve connected wallet to participant (DB + on-chain)
+    // -----------------------------------------------------------------------
+    this.on('ResolveWallet', async (req) => {
+      const { walletAddress, walletVkh } =
+        req.data as { walletAddress: string; walletVkh: string };
+
+      if (!walletAddress || !walletVkh) return req.reject(400, 'Wallet address and VKH are required');
+
+      // 1. DB lookup — fast path
+      const existing = await SELECT.one.from(Participants)
+        .where({ vkh: walletVkh, isActive: true });
+
+      if (existing) {
+        LOG.info(`ResolveWallet: found participant ${existing.ID} (${existing.name}) in DB`);
+        return { participantId: existing.ID, participantName: existing.name, source: 'db' };
+      }
+
+      // 2. On-chain check — look for REGISTRATION NFT in wallet
+      const REGISTRATION_HEX = '524547495354524154494f4e'; // toHex('REGISTRATION')
+      try {
+        const assets = await chainAdapter.getWalletAssets(walletAddress);
+        LOG.info(`ResolveWallet: got ${(assets || []).length} assets for ${walletAddress}`);
+
+        // Match via multiple strategies:
+        // - unit field = policyId(56) + assetNameHex → endsWith check
+        // - asset_assetName or asset.assetName may contain hex or UTF-8
+        // - asset_assetNameHex or asset.assetNameHex (if populated)
+        const regAsset = (assets || []).find((a: any) => {
+          if (a.unit && a.unit.endsWith(REGISTRATION_HEX)) return true;
+          if (a.asset_assetNameHex === REGISTRATION_HEX) return true;
+          if (a.asset?.assetNameHex === REGISTRATION_HEX) return true;
+          if (a.asset_assetName === REGISTRATION_HEX) return true;
+          if (a.asset?.assetName === REGISTRATION_HEX) return true;
+          if (a.asset_assetName === 'REGISTRATION') return true;
+          if (a.asset?.assetName === 'REGISTRATION') return true;
+          return false;
+        });
+
+        if (!regAsset) {
+          LOG.info('ResolveWallet: no REGISTRATION NFT found in wallet assets');
+          return { participantId: null, participantName: null, source: 'none' };
+        }
+
+        // 3. Found registration NFT — auto-create participant
+        const policyId = regAsset.asset_policyId || regAsset.asset?.policyId || '';
+        LOG.info(`ResolveWallet: found REGISTRATION NFT (policyId: ${policyId}, unit: ${regAsset.unit})`);
+        const participantId = cds.utils.uuid();
+        const now = new Date().toISOString();
+
+        await INSERT.into(Participants).entries({
+          ID: participantId,
+          name: 'Wallet holder',
+          role: 'Manufacturer',
+          address: walletAddress,
+          vkh: walletVkh,
+          isActive: true,
+          registrationStatus: 'CONFIRMED',
+          registrationPolicyId: policyId,
+          registeredAt: now
+        });
+
+        LOG.info(`Auto-created participant ${participantId} from on-chain registration NFT (policyId: ${policyId})`);
+        return { participantId, participantName: 'Wallet holder', source: 'on-chain' };
+
+      } catch (err: any) {
+        LOG.warn('On-chain asset check failed:', err.message);
+        // Fall back to no match — don't block login
+        return { participantId: null, participantName: null, source: 'none' };
+      }
     });
 
     // -----------------------------------------------------------------------
@@ -683,7 +980,34 @@ export default class TraceService extends cds.ApplicationService {
           }
         }
 
-        LOG.info(`Polled ${submitted.length} submissions: ${confirmed} confirmed, ${failed} failed`);
+        // Also check SUBMITTED registrations
+        const { Participants: PollingParticipants } = cds.entities('trace');
+        const submittedRegs = await db.run(
+          SELECT.from(PollingParticipants).where({ registrationStatus: 'SUBMITTED' })
+        );
+        for (const reg of submittedRegs) {
+          if (!reg.registrationSubmissionId) continue;
+
+          const check = await chainAdapter.checkSubmissionStatus(reg.registrationSubmissionId);
+          const now = new Date().toISOString();
+
+          if (check.status === 'confirmed') {
+            await db.run(UPDATE(PollingParticipants).set({
+              registrationStatus: 'CONFIRMED',
+              registrationTxHash: check.txHash ?? reg.registrationTxHash,
+              registeredAt: now
+            }).where({ ID: reg.ID }));
+            confirmed++;
+          } else if (check.status === 'failed') {
+            await db.run(UPDATE(PollingParticipants).set({
+              registrationStatus: 'FAILED',
+              registrationErrorMessage: check.errorMessage
+            }).where({ ID: reg.ID }));
+            failed++;
+          }
+        }
+
+        LOG.info(`Polled ${submitted.length + submittedRegs.length} submissions: ${confirmed} confirmed, ${failed} failed`);
       } catch (err: any) {
         LOG.warn('Polling error:', err.message);
       }

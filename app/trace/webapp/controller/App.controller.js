@@ -1,10 +1,8 @@
 sap.ui.define([
   "sap/ui/core/mvc/Controller",
   "sap/ui/core/Fragment",
-  "sap/ui/model/Filter",
-  "sap/ui/model/FilterOperator",
   "trace/model/CardanoWallet"
-], function (Controller, Fragment, Filter, FilterOperator, CardanoWallet) {
+], function (Controller, Fragment, CardanoWallet) {
   "use strict";
 
   return Controller.extend("trace.controller.App", {
@@ -132,17 +130,24 @@ sap.ui.define([
 
       var oModel = this.getOwnerComponent().getModel();
       var oWalletModel = this.getOwnerComponent().getModel("wallet");
+      var sBech32 = oWalletModel.getProperty("/bech32");
 
-      var oListBinding = oModel.bindList("/Participants", null, null, [
-        new Filter("vkh", FilterOperator.EQ, sVkh),
-        new Filter("isActive", FilterOperator.EQ, true)
-      ]);
+      var oActionBinding = oModel.bindContext("/ResolveWallet(...)");
+      oActionBinding.setParameter("walletAddress", sBech32);
+      oActionBinding.setParameter("walletVkh", sVkh);
 
-      oListBinding.requestContexts(0, 1).then(function (aContexts) {
-        if (aContexts.length > 0) {
-          oWalletModel.setProperty("/participantId", aContexts[0].getProperty("ID"));
-          oWalletModel.setProperty("/participantName", aContexts[0].getProperty("name"));
+      oActionBinding.execute().then(function () {
+        var oResult = oActionBinding.getBoundContext().getObject();
+        if (oResult.participantId) {
+          oWalletModel.setProperty("/participantId", oResult.participantId);
+          oWalletModel.setProperty("/participantName", oResult.participantName);
+          if (oResult.source === "on-chain") {
+            sap.m.MessageToast.show("Registration NFT found — participant resolved");
+          }
         }
+      }).catch(function (err) {
+        // Non-blocking — just log, don't prevent app usage
+        jQuery.sap.log.warning("ResolveWallet failed: " + (err.message || err));
       });
     }
   });

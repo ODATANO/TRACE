@@ -1,0 +1,47 @@
+<core:FragmentDefinition
+  xmlns="sap.m"
+  xmlns:core="sap.ui.core"
+  xmlns:f="sap.ui.layout.form">
+
+  <Dialog id="addParticipantDialog" title="Add Participant" contentWidth="480px">
+    <content>
+      <MessageStrip
+        text="A registration NFT will be minted and sent to the participant's wallet. You sign and pay the transaction fee (~2 ADA)."
+        type="Information" showIcon="true"
+        class="sapUiSmallMarginBottom"/>
+
+      <f:SimpleForm
+        editable="true"
+        layout="ResponsiveGridLayout"
+        labelSpanXL="4" labelSpanL="4" labelSpanM="4"
+        emptySpanXL="0" emptySpanL="0" emptySpanM="0"
+        columnsXL="1" columnsL="1" columnsM="1">
+
+        <Label text="Name" required="true"/>
+        <Input id="addParticipantName" value="{addParticipant>/name}" placeholder="Name or organization"/>
+
+        <Label text="Role" required="true"/>
+        <Select id="addParticipantRole" selectedKey="{addParticipant>/role}">
+          <core:Item key="Manufacturer" text="Manufacturer"/>
+          <core:Item key="Distributor" text="Distributor"/>
+          <core:Item key="Pharmacy" text="Pharmacy"/>
+          <core:Item key="Regulator" text="Regulator"/>
+        </Select>
+
+        <Label text="Cardano Address" required="true"/>
+        <Input id="addParticipantAddress" value="{addParticipant>/address}"
+          placeholder="addr_test1..." change=".onAddParticipantAddressChange"/>
+
+        <Label text="Verification Key Hash"/>
+        <Text text="{addParticipant>/vkh}"/>
+      </f:SimpleForm>
+    </content>
+    <beginButton>
+      <Button text="Add &amp; Mint" type="Emphasized" press=".onAddParticipantConfirm"/>
+    </beginButton>
+    <endButton>
+      <Button text="Cancel" press=".onAddParticipantCancel"/>
+    </endButton>
+  </Dialog>
+
+</core:FragmentDefinition>

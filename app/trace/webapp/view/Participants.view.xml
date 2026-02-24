@@ -6,7 +6,10 @@
 
   <Page title="Participants" id="participantsPage">
     <headerContent>
-      <Button text="Add Participant" icon="sap-icon://add-employee" type="Emphasized" press="onAdd"/>
+      <Button text="Add Participant" icon="sap-icon://add-employee" type="Emphasized" press="onAdd"
+        visible="{= !!${wallet>/participantId}}"/>
+      <Button text="Register" icon="sap-icon://person-placeholder" type="Emphasized" press="onRegister"
+        visible="{= ${wallet>/connected} &amp;&amp; !${wallet>/participantId}}"/>
       <Button icon="sap-icon://refresh" press="onRefresh" tooltip="Refresh"/>
     </headerContent>
 

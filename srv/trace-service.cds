@@ -94,6 +94,48 @@ service TraceService @(path: '/odata/v4/trace') {
     status : String;
   };
 
+  // Register a new participant via on-chain NFT mint (self-service)
+  action RegisterParticipant(
+    name          : String,
+    role          : String,
+    walletAddress : String,
+    walletVkh     : String
+  ) returns {
+    participantId    : UUID;
+    policyId         : String;
+    unsignedCbor     : LargeString;
+    buildId          : String;
+    signingRequestId : String;
+    txBodyHash       : String;
+  };
+
+  // Add a participant on behalf (current user mints registration NFT to their wallet)
+  action AddParticipant(
+    name               : String,
+    role               : String,
+    participantAddress : String,
+    participantVkh     : String,
+    walletAddress      : String,
+    walletVkh          : String
+  ) returns {
+    participantId    : UUID;
+    policyId         : String;
+    unsignedCbor     : LargeString;
+    buildId          : String;
+    signingRequestId : String;
+    txBodyHash       : String;
+  };
+
+  // Resolve connected wallet to a participant (checks DB + on-chain assets)
+  action ResolveWallet(
+    walletAddress : String,
+    walletVkh     : String
+  ) returns {
+    participantId   : UUID;
+    participantName : String;
+    source          : String;
+  };
+
   // Verify batch chain of custody (public, read-only)
   function VerifyBatch(batchIdOrFingerprint : String) returns {
     fingerprint   : String;
