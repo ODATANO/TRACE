@@ -31,7 +31,7 @@
         "backends": [
           "blockfrost"
         ],
-        "blockfrostApiKey": "previewAe2uMQNis3wntrX0BQtZ5G5i9jyFPsIu",
+        "blockfrostApiKey": "preview_api_key",
         "txBuilders": [
           "buildooor"
         ]
