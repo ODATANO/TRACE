@@ -44,6 +44,16 @@ export interface TransferResult {
   txBodyHash: string;
 }
 
+export interface DeliverParams {
+  senderAddress: string;
+  manufacturerVkh: string;
+  currentHolderVkh: string;
+  batchIdHex: string;
+  currentStep: number;
+  scriptTxHash: string;
+  scriptOutputIndex: number;
+}
+
 export interface SigningRequestResult {
   signingRequestId: string;
   unsignedTxCbor: string;
@@ -170,6 +180,10 @@ export function buildTransferRedeemer(nextHolderVkh: string): string {
   });
 }
 
+export function buildDeliverRedeemer(): string {
+  return JSON.stringify({ constructor: 1, fields: [] });
+}
+
 export function toHex(str: string): string {
   return Buffer.from(str, 'utf8').toString('hex');
 }
@@ -200,7 +214,7 @@ export async function mintBatchNft(params: MintParams): Promise<MintResult> {
   const build = await srv.send('BuildMintTransaction', {
     senderAddress: params.senderAddress,
     recipientAddress: params.senderAddress,
-    lovelaceAmount: '2000000',
+    lovelaceAmount: '2500000',
     mintActionsJson: JSON.stringify([{ assetUnit: batchIdHex, quantity: '1' }]),
     mintingPolicyScript: validatorHex,
     scriptParamsJson: JSON.stringify([{ bytes: params.manufacturerVkh }]),
@@ -313,7 +327,7 @@ export async function transferBatch(params: TransferParams): Promise<TransferRes
   const build = await srv.send('BuildPlutusSpendTransaction', {
     senderAddress: params.senderAddress,
     recipientAddress: params.senderAddress,
-    lovelaceAmount: '2000000',
+    lovelaceAmount: '2500000',
     validatorScript: validatorHex,
     scriptParamsJson: JSON.stringify([{ bytes: params.manufacturerVkh }]),
     scriptTxHash: params.scriptTxHash,
@@ -323,6 +337,40 @@ export async function transferBatch(params: TransferParams): Promise<TransferRes
     changeAddress: params.senderAddress,
     requiredSignersJson: JSON.stringify([params.currentHolderVkh]),
     lockOnScript: true
+  });
+
+  return {
+    buildId: build.id,
+    unsignedCbor: build.unsignedTxCbor,
+    txBodyHash: build.txBodyHash
+  };
+}
+
+/**
+ * Build a spend transaction to deliver the batch NFT.
+ * The NFT leaves the script address and goes to the current holder's wallet,
+ * making it permanently non-transferable through the validator.
+ */
+export async function deliverBatch(params: DeliverParams): Promise<TransferResult> {
+
+  const srv = await txSrv();
+  const validatorHex = getValidatorHex('pharma_trace.pharma_trace.spend');
+
+  const redeemer = buildDeliverRedeemer();
+
+  // No inlineDatumJson — wallet output doesn't need datum
+  // No lockOnScript — NFT goes to wallet, not back to script
+  const build = await srv.send('BuildPlutusSpendTransaction', {
+    senderAddress: params.senderAddress,
+    recipientAddress: params.senderAddress,
+    lovelaceAmount: '2500000',
+    validatorScript: validatorHex,
+    scriptParamsJson: JSON.stringify([{ bytes: params.manufacturerVkh }]),
+    scriptTxHash: params.scriptTxHash,
+    scriptOutputIndex: params.scriptOutputIndex,
+    redeemerJson: redeemer,
+    changeAddress: params.senderAddress,
+    requiredSignersJson: JSON.stringify([params.currentHolderVkh])
   });
 
   return {

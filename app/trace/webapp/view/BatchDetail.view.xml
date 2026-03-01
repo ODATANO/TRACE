@@ -16,7 +16,7 @@
         press="onMint" visible="{path: 'status', targetType: 'any', formatter: '.formatDraftOnly'}"/>
       <Button text="Transfer" icon="sap-icon://shipping-status"
         press="onTransfer" visible="{path: 'status', targetType: 'any', formatter: '.formatTransferVisible'}"/>
-      <Button text="Confirm Receipt" icon="sap-icon://accept"
+      <Button text="Deliver &amp; Sign" icon="sap-icon://accept" type="Emphasized"
         press="onConfirmReceipt" visible="{path: 'status', targetType: 'any', formatter: '.formatConfirmReceiptVisible'}"/>
       <Button text="Anchor Doc" icon="sap-icon://document"
         press="onAnchorDoc" visible="{path: 'status', targetType: 'any', formatter: '.formatNonDraft'}"/>

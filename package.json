@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "A simple CAP project.",
   "dependencies": {
-    "@odatano/core": "0.3.20",
+    "@odatano/core": "^0.3.21",
     "@sap/cds": "^9",
     "express": "^4"
   },
@@ -29,9 +29,10 @@
       "odatano-core": {
         "network": "preview",
         "backends": [
-          "blockfrost"
+          "blockfrost",
+          "koios"
         ],
-        "blockfrostApiKey": "preview_api_key",
+        "blockfrostApiKey": "your_blockfrost_api_key_here",
         "txBuilders": [
           "buildooor"
         ]

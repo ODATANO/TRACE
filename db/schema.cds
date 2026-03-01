@@ -49,7 +49,7 @@ entity OnChainAssets {
 entity ProofEvents {
   key ID           : UUID;
   batch            : Association to Batches;
-  eventType        : String enum { MINT; TRANSFER; VERIFY; RECALL; DOCUMENT_ANCHOR };
+  eventType        : String enum { MINT; TRANSFER; DELIVER; VERIFY; RECALL; DOCUMENT_ANCHOR };
   payloadDigest    : String(64);  // SHA-256 hex
   schema           : String(100); // schema identifier
   signerVkh        : String(56);

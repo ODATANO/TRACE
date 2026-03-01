@@ -217,6 +217,9 @@ export default class TraceService extends cds.ApplicationService {
         if (pendingEvent.eventType === 'TRANSFER') {
           await UPDATE(Batches).set({ status: 'IN_TRANSIT' }).where({ ID: pendingEvent.batch_ID });
         }
+        if (pendingEvent.eventType === 'DELIVER') {
+          await UPDATE(Batches).set({ status: 'DELIVERED' }).where({ ID: pendingEvent.batch_ID });
+        }
       }
 
       // Also update any DocumentAnchor linked to this signingRequestId
@@ -392,6 +395,32 @@ export default class TraceService extends cds.ApplicationService {
         return { buildId: result.buildId, signingRequestId: signingReq.signingRequestId, unsignedCbor: signingReq.unsignedTxCbor, txBodyHash: signingReq.txBodyHash };
       }
 
+      if (evt.eventType === 'DELIVER') {
+        const asset = await SELECT.one.from(OnChainAssets).where({ batch_ID: batch.ID });
+        if (!asset?.currentUtxoRef) return req.reject(409, `No current UTxO reference for retry`);
+        if (!asset.manufacturerVkh) return req.reject(409, `On-chain asset missing manufacturerVkh`);
+
+        const [scriptTxHash, indexStr] = asset.currentUtxoRef.split('#');
+
+        const result = await chainAdapter.deliverBatch({
+          senderAddress: walletAddress,
+          manufacturerVkh: asset.manufacturerVkh,
+          currentHolderVkh: walletVkh,
+          batchIdHex: chainAdapter.toHex(batch.batchNumber),
+          currentStep: asset.step,
+          scriptTxHash,
+          scriptOutputIndex: parseInt(indexStr, 10)
+        });
+
+        const signingReq = await chainAdapter.createSigningRequest(result.buildId);
+
+        await UPDATE(ProofEvents)
+          .set({ buildId: result.buildId, signingRequestId: signingReq.signingRequestId, status: 'PENDING', errorMessage: null })
+          .where({ ID: evt.ID });
+
+        return { buildId: result.buildId, signingRequestId: signingReq.signingRequestId, unsignedCbor: signingReq.unsignedTxCbor, txBodyHash: signingReq.txBodyHash };
+      }
+
       return req.reject(400, `Cannot retry event type ${evt.eventType}`);
     });
 
@@ -510,17 +539,66 @@ export default class TraceService extends cds.ApplicationService {
     });
 
     // -----------------------------------------------------------------------
-    // ConfirmReceipt — mark a batch as DELIVERED (business state only)
+    // ConfirmReceipt — on-chain delivery: NFT leaves script → holder wallet
     // -----------------------------------------------------------------------
     this.on('ConfirmReceipt', async (req) => {
-      const { batchId } = req.data as { batchId: string };
+      const { batchId, walletAddress, walletVkh } =
+        req.data as { batchId: string; walletAddress: string; walletVkh: string };
+
+      if (!walletAddress || !walletVkh) return req.reject(400, `Wallet address and VKH are required (connect wallet first)`);
 
       const batch = await SELECT.one.from(Batches).where({ ID: batchId });
       if (!batch) return req.reject(404, `Batch ${batchId} not found`);
-      if (batch.status !== 'IN_TRANSIT') return req.reject(409, `Batch must be IN_TRANSIT to confirm receipt, is ${batch.status}`);
+      if (batch.status !== 'IN_TRANSIT') return req.reject(409, `Batch must be IN_TRANSIT to confirm delivery, is ${batch.status}`);
 
-      await UPDATE(Batches).set({ status: 'DELIVERED' }).where({ ID: batchId });
-      return { status: 'DELIVERED' };
+      const asset = await SELECT.one.from(OnChainAssets).where({ batch_ID: batchId });
+      if (!asset) return req.reject(409, `No on-chain asset found for batch`);
+      if (!asset.currentUtxoRef) return req.reject(409, `No current UTxO reference — last transfer not yet confirmed`);
+      if (!asset.manufacturerVkh) return req.reject(409, `On-chain asset missing manufacturerVkh`);
+
+      // Ownership check: wallet VKH must match on-chain current holder
+      if (asset.currentHolder && asset.currentHolder !== walletVkh) {
+        return req.reject(403, `Only the current holder can deliver this batch`);
+      }
+
+      const [scriptTxHash, indexStr] = asset.currentUtxoRef.split('#');
+      const scriptOutputIndex = parseInt(indexStr, 10);
+
+      const result = await chainAdapter.deliverBatch({
+        senderAddress: walletAddress,
+        manufacturerVkh: asset.manufacturerVkh,
+        currentHolderVkh: walletVkh,
+        batchIdHex: chainAdapter.toHex(batch.batchNumber),
+        currentStep: asset.step,
+        scriptTxHash,
+        scriptOutputIndex
+      });
+
+      // Create signing request for CIP-30 wallet flow
+      const signingReq = await chainAdapter.createSigningRequest(result.buildId);
+
+      const digest = computeDigest({
+        action: 'DELIVER',
+        timestamp: new Date().toISOString()
+      });
+
+      await INSERT.into(ProofEvents).entries({
+        batch_ID: batchId,
+        eventType: 'DELIVER',
+        payloadDigest: digest,
+        schema: 'TRACE_DELIVER_V1',
+        signerVkh: walletVkh,
+        buildId: result.buildId,
+        signingRequestId: signingReq.signingRequestId,
+        status: 'PENDING'
+      });
+
+      return {
+        unsignedCbor: signingReq.unsignedTxCbor,
+        buildId: result.buildId,
+        signingRequestId: signingReq.signingRequestId,
+        txBodyHash: signingReq.txBodyHash
+      };
     });
 
     // -----------------------------------------------------------------------
@@ -902,6 +980,22 @@ export default class TraceService extends cds.ApplicationService {
         .where({ ID: evt.batch_ID });
     }
 
+    if (evt.eventType === 'DELIVER') {
+      const asset = await SELECT.one.from(OnChainAssets).where({ batch_ID: evt.batch_ID });
+      if (asset) {
+        // NFT is now at the holder's wallet, not the script address
+        await UPDATE(OnChainAssets)
+          .set({
+            currentUtxoRef: null,
+            step: (asset.step ?? 0) + 1
+          })
+          .where({ ID: asset.ID });
+      }
+      await UPDATE(Batches)
+        .set({ status: 'DELIVERED' })
+        .where({ ID: evt.batch_ID });
+    }
+
     if (evt.eventType === 'DOCUMENT_ANCHOR' && evt.buildId) {
       await UPDATE(DocumentAnchors)
         .set({ onChainTxHash: txHash, status: 'CONFIRMED' })
@@ -965,6 +1059,16 @@ export default class TraceService extends cds.ApplicationService {
                 }).where({ ID: asset.ID }));
               }
               await db.run(UPDATE(Batches).set({ status: 'IN_TRANSIT' }).where({ ID: evt.batch_ID }));
+            }
+            if (evt.eventType === 'DELIVER') {
+              const asset = await db.run(SELECT.one.from(OnChainAssets).where({ batch_ID: evt.batch_ID }));
+              if (asset) {
+                await db.run(UPDATE(OnChainAssets).set({
+                  currentUtxoRef: null,
+                  step: (asset.step ?? 0) + 1
+                }).where({ ID: asset.ID }));
+              }
+              await db.run(UPDATE(Batches).set({ status: 'DELIVERED' }).where({ ID: evt.batch_ID }));
             }
             if (evt.eventType === 'DOCUMENT_ANCHOR' && evt.buildId) {
               await db.run(UPDATE(DocumentAnchors).set({ onChainTxHash: txHash, status: 'CONFIRMED' }).where({ buildId: evt.buildId }));

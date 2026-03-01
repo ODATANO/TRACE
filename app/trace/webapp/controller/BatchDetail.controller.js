@@ -214,22 +214,19 @@ sap.ui.define([
       var oContext = this.getView().getBindingContext();
       var sBatchId = oContext.getProperty("ID");
 
-      MessageBox.confirm("Confirm receipt of batch '" + oContext.getProperty("batchNumber") + "'?", {
-        title: "Confirm Receipt",
-        onClose: function (sAction) {
-          if (sAction === MessageBox.Action.OK) {
-            var oModel = this.getView().getModel();
-            var oActionBinding = oModel.bindContext("/ConfirmReceipt(...)");
-            oActionBinding.setParameter("batchId", sBatchId);
-            oActionBinding.execute().then(function () {
-              MessageToast.show("Batch marked as delivered");
-              this.getView().getElementBinding().refresh();
-            }.bind(this)).catch(function (err) {
-              MessageBox.error("Failed: " + (err.message || err));
-            });
-          }
-        }.bind(this)
-      });
+      MessageBox.confirm(
+        "Confirm delivery of batch '" + oContext.getProperty("batchNumber") + "'?\n\n" +
+        "This on-chain transaction moves the NFT to your wallet as a permanent delivery certificate. " +
+        "The batch will no longer be transferable after delivery.",
+        {
+          title: "Confirm Delivery",
+          onClose: function (sAction) {
+            if (sAction === MessageBox.Action.OK) {
+              this._signAndSubmit("ConfirmReceipt", { batchId: sBatchId });
+            }
+          }.bind(this)
+        }
+      );
     },
 
     // --- Signing Helper ---

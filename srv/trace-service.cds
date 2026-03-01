@@ -89,9 +89,16 @@ service TraceService @(path: '/odata/v4/trace') {
     txBodyHash       : String;
   };
 
-  // Confirm receipt of a batch (marks as DELIVERED — business state only, no on-chain tx)
-  action ConfirmReceipt(batchId : UUID) returns {
-    status : String;
+  // Confirm delivery on-chain — NFT leaves script address, batch becomes non-transferable
+  action ConfirmReceipt(
+    batchId       : UUID,
+    walletAddress : String,
+    walletVkh     : String
+  ) returns {
+    unsignedCbor     : LargeString;
+    buildId          : String;
+    signingRequestId : String;
+    txBodyHash       : String;
   };
 
   // Register a new participant via on-chain NFT mint (self-service)
