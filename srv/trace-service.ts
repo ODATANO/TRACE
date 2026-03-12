@@ -1052,59 +1052,84 @@ export default class TraceService extends cds.ApplicationService {
         const { ProofEvents } = cds.entities('trace');
         const run = db.run.bind(db);
 
-        const submitted = await run(SELECT.from(ProofEvents).where({ status: 'SUBMITTED' }));
+        // Check both SUBMITTED and FAILED events that have a txHash (may have been confirmed on-chain)
+        const submitted = await run(
+          SELECT.from(ProofEvents).where('status in', ['SUBMITTED', 'FAILED']).and('onChainTxHash is not null')
+        );
         if (!submitted.length) return;
 
         let confirmed = 0, failed = 0;
 
         for (const evt of submitted) {
-          if (!evt.submissionId) continue;
-
-          const check = await chainAdapter.checkSubmissionStatus(evt.submissionId);
           const now = new Date().toISOString();
 
-          if (check.status === 'confirmed') {
-            const txHash = check.txHash ?? evt.onChainTxHash;
-            await run(UPDATE(ProofEvents)
-              .set({ status: 'CONFIRMED', onChainTxHash: txHash, lastCheckedAt: now })
-              .where({ ID: evt.ID }));
+          // Strategy 1: Check via ODATANO submission tracking
+          if (evt.submissionId) {
+            const check = await chainAdapter.checkSubmissionStatus(evt.submissionId);
 
-            await this._applyConfirmationSideEffects(evt, txHash, run);
-            confirmed++;
-          } else if (check.status === 'failed') {
-            await run(UPDATE(ProofEvents)
-              .set({ status: 'FAILED', errorMessage: check.errorMessage, lastCheckedAt: now })
-              .where({ ID: evt.ID }));
-            failed++;
-          } else {
-            await run(UPDATE(ProofEvents).set({ lastCheckedAt: now }).where({ ID: evt.ID }));
+            if (check.status === 'confirmed') {
+              const txHash = check.txHash ?? evt.onChainTxHash;
+              await run(UPDATE(ProofEvents)
+                .set({ status: 'CONFIRMED', onChainTxHash: txHash, lastCheckedAt: now })
+                .where({ ID: evt.ID }));
+              await this._applyConfirmationSideEffects(evt, txHash, run);
+              confirmed++;
+              continue;
+            }
+
+            // For 'failed', 'submitted', or 'unknown' — fall through to on-chain check
           }
+
+          // Strategy 2: Verify directly on-chain if we have a txHash
+          if (evt.onChainTxHash) {
+            const onChain = await chainAdapter.isTxConfirmedOnChain(evt.onChainTxHash);
+            if (onChain) {
+              await run(UPDATE(ProofEvents)
+                .set({ status: 'CONFIRMED', lastCheckedAt: now })
+                .where({ ID: evt.ID }));
+              await this._applyConfirmationSideEffects(evt, evt.onChainTxHash, run);
+              confirmed++;
+              continue;
+            }
+          }
+
+          // Neither ODATANO nor on-chain confirmed — leave as SUBMITTED for now
+          await run(UPDATE(ProofEvents).set({ lastCheckedAt: now }).where({ ID: evt.ID }));
         }
 
         // Also check SUBMITTED registrations
         const { Participants: PollingParticipants } = cds.entities('trace');
         const submittedRegs = await run(
-          SELECT.from(PollingParticipants).where({ registrationStatus: 'SUBMITTED' })
+          SELECT.from(PollingParticipants).where('registrationStatus in', ['SUBMITTED', 'FAILED'])
         );
         for (const reg of submittedRegs) {
-          if (!reg.registrationSubmissionId) continue;
-
-          const check = await chainAdapter.checkSubmissionStatus(reg.registrationSubmissionId);
           const now = new Date().toISOString();
 
-          if (check.status === 'confirmed') {
-            await run(UPDATE(PollingParticipants).set({
-              registrationStatus: 'CONFIRMED',
-              registrationTxHash: check.txHash ?? reg.registrationTxHash,
-              registeredAt: now
-            }).where({ ID: reg.ID }));
-            confirmed++;
-          } else if (check.status === 'failed') {
-            await run(UPDATE(PollingParticipants).set({
-              registrationStatus: 'FAILED',
-              registrationErrorMessage: check.errorMessage
-            }).where({ ID: reg.ID }));
-            failed++;
+          // Strategy 1: ODATANO submission tracking
+          if (reg.registrationSubmissionId) {
+            const check = await chainAdapter.checkSubmissionStatus(reg.registrationSubmissionId);
+            if (check.status === 'confirmed') {
+              await run(UPDATE(PollingParticipants).set({
+                registrationStatus: 'CONFIRMED',
+                registrationTxHash: check.txHash ?? reg.registrationTxHash,
+                registeredAt: now
+              }).where({ ID: reg.ID }));
+              confirmed++;
+              continue;
+            }
+          }
+
+          // Strategy 2: Direct on-chain check via txHash
+          if (reg.registrationTxHash) {
+            const onChain = await chainAdapter.isTxConfirmedOnChain(reg.registrationTxHash);
+            if (onChain) {
+              await run(UPDATE(PollingParticipants).set({
+                registrationStatus: 'CONFIRMED',
+                registeredAt: now
+              }).where({ ID: reg.ID }));
+              confirmed++;
+              continue;
+            }
           }
         }
 

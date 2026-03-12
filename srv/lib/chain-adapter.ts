@@ -2,6 +2,8 @@ import cds from '@sap/cds';
 import fs from 'fs';
 import path from 'path';
 
+const LOG = cds.log('chain-adapter');
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -199,16 +201,19 @@ export function toHex(str: string): string {
 export async function getScriptOutputIndex(txHash: string, scriptAddress: string): Promise<number> {
   try {
     const srv = await oDataSrv();
-    const tx = await srv.send('GetTransactionByHash', { hash: txHash });
-    if (tx?.outputs) {
-      for (const out of tx.outputs) {
-        if (out.address === scriptAddress) return out.outputIndex ?? 0;
+    return await srv.tx({ user: cds.User.privileged }, async (tx: any) => {
+      const result = await tx.send('GetTransactionByHash', { hash: txHash });
+      if (result?.outputs) {
+        for (const out of result.outputs) {
+          if (out.address === scriptAddress) return out.outputIndex ?? 0;
+        }
       }
-    }
+      return 0;
+    });
   } catch (err: any) {
     // Fallback — tx not yet indexed or address not found
+    return 0;
   }
-  return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -423,15 +428,31 @@ export async function createSigningRequest(buildId: string): Promise<SigningRequ
 export async function submitSigned(signingRequestId: string, walletWitnessCbor: string): Promise<SubmitResult> {
   const srv = await signSrv();
 
-  const result = await srv.send('SubmitVerifiedTransaction', {
-    signingRequestId,
-    signedTxCbor: walletWitnessCbor
-  });
-  return {
-    txHash: result.txHash,
-    submissionId: result.id,
-    status: result.status
-  };
+  try {
+    const result = await srv.send('SubmitVerifiedTransaction', {
+      signingRequestId,
+      signedTxCbor: walletWitnessCbor
+    });
+    return {
+      txHash: result.txHash,
+      submissionId: result.id,
+      status: result.status
+    };
+  } catch (err: any) {
+    // "All inputs are spent / already been included" means the TX is already on-chain
+    const msg = err.message || '';
+    if (msg.includes('already been included') || msg.includes('All inputs are spent')) {
+      LOG.warn('TX already on-chain, treating as success:', msg);
+      // Retrieve the txBodyHash from the signing request as fallback txHash
+      const sigReq = await srv.send('READ', { path: `SigningRequests('${signingRequestId}')` }).catch(() => null);
+      return {
+        txHash: sigReq?.txBodyHash || signingRequestId,
+        submissionId: signingRequestId,
+        status: 'submitted'
+      };
+    }
+    throw err;
+  }
 }
 
 /**
@@ -440,22 +461,42 @@ export async function submitSigned(signingRequestId: string, walletWitnessCbor: 
 export async function checkSubmissionStatus(submissionId: string): Promise<SubmissionStatus> {
   const srv = await txSrv();
   try {
-    const result = await srv.send({
-      event: 'CheckSubmissionStatus',
-      data: {},
-      params: [{ id: submissionId }]
+    return await srv.tx({ user: cds.User.privileged }, async (tx: any) => {
+      const result = await tx.send({
+        event: 'CheckSubmissionStatus',
+        data: {},
+        params: [{ id: submissionId }]
+      });
+      return {
+        status: result.status ?? 'submitted',
+        txHash: result.txHash ?? null,
+        errorMessage: result.errorMessage ?? null
+      } as SubmissionStatus;
     });
-    return {
-      status: result.status ?? 'submitted',
-      txHash: result.txHash ?? null,
-      errorMessage: result.errorMessage ?? null
-    };
   } catch (err: any) {
+    LOG.warn('CheckSubmissionStatus error for', submissionId, ':', err.message);
     return {
-      status: 'failed',
+      status: 'unknown',
       txHash: null,
       errorMessage: err.message ?? 'Unknown error checking submission status'
     };
+  }
+}
+
+/**
+ * Check if a transaction hash exists on-chain (confirmed).
+ * Runs as privileged user to bypass auth in background polling contexts.
+ */
+export async function isTxConfirmedOnChain(txHash: string): Promise<boolean> {
+  try {
+    const srv = await oDataSrv();
+    return await srv.tx({ user: cds.User.privileged }, async (tx: any) => {
+      const result = await tx.send('GetTransactionByHash', { hash: txHash });
+      return !!result?.blockHash;
+    });
+  } catch (err: any) {
+    LOG.warn('On-chain TX check failed:', err.message);
+    return false;
   }
 }
 
@@ -486,9 +527,11 @@ export async function anchorDocument(params: AnchorParams): Promise<AnchorResult
  */
 export async function getWalletAssets(walletAddress: string): Promise<any[]> {
   const srv = await oDataSrv();
-  // Trigger address indexing — GetAddressByBech32 fetches from blockchain on cache miss
-  await srv.send('GetAddressByBech32', { address: walletAddress });
-  return srv.send('GetAssetsByAddress', { address: walletAddress });
+  return srv.tx({ user: cds.User.privileged }, async (tx: any) => {
+    // Trigger address indexing — GetAddressByBech32 fetches from blockchain on cache miss
+    await tx.send('GetAddressByBech32', { address: walletAddress });
+    return tx.send('GetAssetsByAddress', { address: walletAddress });
+  });
 }
 
 /**
@@ -497,8 +540,10 @@ export async function getWalletAssets(walletAddress: string): Promise<any[]> {
 export async function getTxStatus(txHash: string): Promise<TxStatus> {
   const srv = await oDataSrv();
   try {
-    const result = await srv.send('GetTransactionByHash', { hash: txHash });
-    return { status: 'confirmed', block: result?.blockHash ?? null, slot: result?.slot ?? null };
+    return await srv.tx({ user: cds.User.privileged }, async (tx: any) => {
+      const result = await tx.send('GetTransactionByHash', { hash: txHash });
+      return { status: 'confirmed' as const, block: result?.blockHash ?? null, slot: result?.slot ?? null };
+    });
   } catch (err: any) {
     if (err.code === 404 || err.status === 404) {
       return { status: 'pending', block: null, slot: null };
