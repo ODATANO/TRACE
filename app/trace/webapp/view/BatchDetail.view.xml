@@ -96,6 +96,7 @@
 
               <Label text="Dosage Form" />
               <Select selectedKey="{batchInfo>/dosageForm}" enabled="{path: 'status', targetType: 'any', formatter: '.formatDraftOnly'}">
+                <core:Item key="" text="-- Select --" />
                 <core:Item key="Tablet" text="Tablet" />
                 <core:Item key="Capsule" text="Capsule" />
                 <core:Item key="Liquid" text="Liquid" />

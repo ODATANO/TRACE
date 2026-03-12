@@ -3,7 +3,7 @@ import * as chainAdapter from './lib/chain-adapter';
 import { computeDigest } from './lib/digest';
 
 const LOG = cds.log('trace');
-const POLL_INTERVAL_MS = 30_000; // 30 seconds
+const POLL_INTERVAL_MS = (cds.env.requires as any)?.['trace-service']?.pollIntervalMs ?? 30_000;
 
 export default class TraceService extends cds.ApplicationService {
 
@@ -63,6 +63,7 @@ export default class TraceService extends cds.ApplicationService {
         policyId: result.policyId,
         assetName: result.assetName,
         fingerprint: result.fingerprint || null,
+        scriptAddress: result.scriptAddress || null,
         step: 0,
         manufacturerVkh: walletVkh,
         currentHolder: walletVkh
@@ -167,18 +168,13 @@ export default class TraceService extends cds.ApplicationService {
         payloadDigest: digest,
         schema: 'TRACE_TRANSFER_V1',
         signerVkh: walletVkh,
+        targetParticipantId: toParticipantId,
         buildId: result.buildId,
         signingRequestId: signingReq.signingRequestId,
         status: 'PENDING'
       });
 
-      // Optimistically update current holder (display + on-chain truth)
-      await UPDATE(Batches)
-        .set({ currentHolder_ID: toParticipantId })
-        .where({ ID: batchId });
-      await UPDATE(OnChainAssets)
-        .set({ currentHolder: targetParticipant.vkh })
-        .where({ batch_ID: batchId });
+      // Holder update deferred to SubmitSigned (after user signs)
 
       return {
         unsignedCbor: signingReq.unsignedTxCbor,
@@ -216,6 +212,18 @@ export default class TraceService extends cds.ApplicationService {
         }
         if (pendingEvent.eventType === 'TRANSFER') {
           await UPDATE(Batches).set({ status: 'IN_TRANSIT' }).where({ ID: pendingEvent.batch_ID });
+          // Now that user has signed, update holder (deferred from TransferBatch)
+          if (pendingEvent.targetParticipantId) {
+            await UPDATE(Batches)
+              .set({ currentHolder_ID: pendingEvent.targetParticipantId })
+              .where({ ID: pendingEvent.batch_ID });
+            const target = await SELECT.one.from(Participants).where({ ID: pendingEvent.targetParticipantId });
+            if (target) {
+              await UPDATE(OnChainAssets)
+                .set({ currentHolder: target.vkh })
+                .where({ batch_ID: pendingEvent.batch_ID });
+            }
+          }
         }
         if (pendingEvent.eventType === 'DELIVER') {
           await UPDATE(Batches).set({ status: 'DELIVERED' }).where({ ID: pendingEvent.batch_ID });
@@ -372,6 +380,10 @@ export default class TraceService extends cds.ApplicationService {
         const asset = await SELECT.one.from(OnChainAssets).where({ batch_ID: batch.ID });
         if (!asset?.currentUtxoRef) return req.reject(409, `No current UTxO reference for retry`);
         if (!asset.manufacturerVkh) return req.reject(409, `On-chain asset missing manufacturerVkh`);
+        if (!evt.targetParticipantId) return req.reject(409, `Transfer event missing target participant`);
+
+        const target = await SELECT.one.from(Participants).where({ ID: evt.targetParticipantId });
+        if (!target?.vkh) return req.reject(409, `Target participant not found for retry`);
 
         const [scriptTxHash, indexStr] = asset.currentUtxoRef.split('#');
 
@@ -379,7 +391,7 @@ export default class TraceService extends cds.ApplicationService {
           senderAddress: walletAddress,
           manufacturerVkh: asset.manufacturerVkh,
           currentHolderVkh: walletVkh,
-          nextHolderVkh: evt.signerVkh,
+          nextHolderVkh: target.vkh,
           batchIdHex: chainAdapter.toHex(batch.batchNumber),
           currentStep: asset.step,
           scriptTxHash,
@@ -508,9 +520,12 @@ export default class TraceService extends cds.ApplicationService {
         }
       };
 
+      // Deterministic digest: same inputs → same hash (no timestamp)
+      const recallDigest = computeDigest({ reason, batchId, recalledBy: walletVkh });
+
       const result = await chainAdapter.anchorDocument({
         senderAddress: walletAddress,
-        documentHash: computeDigest({ reason, batchId, timestamp: new Date().toISOString() }),
+        documentHash: recallDigest,
         metadataJson: JSON.stringify(metadata)
       });
 
@@ -519,7 +534,7 @@ export default class TraceService extends cds.ApplicationService {
       await INSERT.into(ProofEvents).entries({
         batch_ID: batchId,
         eventType: 'RECALL',
-        payloadDigest: computeDigest({ reason }),
+        payloadDigest: recallDigest,
         schema: 'TRACE_RECALL_V1',
         signerVkh: walletVkh,
         buildId: result.buildId,
@@ -924,6 +939,15 @@ export default class TraceService extends cds.ApplicationService {
     // -----------------------------------------------------------------------
     this._startPolling();
 
+    // Clean up polling interval on shutdown
+    cds.on('shutdown', () => {
+      if (this._pollingInterval) {
+        clearInterval(this._pollingInterval);
+        this._pollingInterval = null;
+        LOG.info('Polling interval cleared');
+      }
+    });
+
     return super.init();
   }
 
@@ -932,89 +956,103 @@ export default class TraceService extends cds.ApplicationService {
   // =========================================================================
 
   /**
-   * Post-confirmation side effects: update OnChainAssets and Batch status.
+   * Shared post-confirmation side effects.
+   * @param run - query executor: identity for request context, db.run for polling context
    */
-  private async _onConfirmed(evt: any, txHash: string) {
-    const { Batches, Participants, OnChainAssets, DocumentAnchors } = this.entities;
+  private async _applyConfirmationSideEffects(
+    evt: any, txHash: string,
+    run: (q: any) => Promise<any> = (q) => q
+  ) {
+    const { Batches, Participants, OnChainAssets, DocumentAnchors } = cds.entities('trace');
 
     if (evt.eventType === 'MINT') {
-      const asset = await SELECT.one.from(OnChainAssets).where({ batch_ID: evt.batch_ID });
+      const asset = await run(SELECT.one.from(OnChainAssets).where({ batch_ID: evt.batch_ID }));
       if (asset) {
-        await UPDATE(OnChainAssets)
-          .set({ currentUtxoRef: txHash + '#0' })
-          .where({ ID: asset.ID });
+        const outputIdx = asset.scriptAddress
+          ? await chainAdapter.getScriptOutputIndex(txHash, asset.scriptAddress)
+          : 0;
+        await run(UPDATE(OnChainAssets)
+          .set({ currentUtxoRef: txHash + '#' + outputIdx })
+          .where({ ID: asset.ID }));
       }
-      // Ensure manufacturer + currentHolder are set from minter's VKH
       const updateSet: any = { status: 'MINTED' };
       if (evt.signerVkh) {
-        const minter = await SELECT.one.from(Participants)
-          .where({ vkh: evt.signerVkh, isActive: true }).columns('ID');
+        const minter = await run(SELECT.one.from(Participants)
+          .where({ vkh: evt.signerVkh, isActive: true }));
         if (minter) {
-          const batch = await SELECT.one.from(Batches).where({ ID: evt.batch_ID });
+          const batch = await run(SELECT.one.from(Batches).where({ ID: evt.batch_ID }));
           if (!batch?.manufacturer_ID) updateSet.manufacturer_ID = minter.ID;
           if (!batch?.currentHolder_ID) updateSet.currentHolder_ID = minter.ID;
         }
       }
-      await UPDATE(Batches).set(updateSet).where({ ID: evt.batch_ID });
+      await run(UPDATE(Batches).set(updateSet).where({ ID: evt.batch_ID }));
     }
 
     if (evt.eventType === 'TRANSFER') {
-      const asset = await SELECT.one.from(OnChainAssets).where({ batch_ID: evt.batch_ID });
+      const asset = await run(SELECT.one.from(OnChainAssets).where({ batch_ID: evt.batch_ID }));
       if (asset) {
-        // Look up the new holder's VKH from the batch's currentHolder (set optimistically during TransferBatch)
-        const batch = await SELECT.one.from(Batches).where({ ID: evt.batch_ID });
-        const newHolder = batch?.currentHolder_ID
-          ? await SELECT.one.from('trace.Participants').where({ ID: batch.currentHolder_ID })
-          : null;
-
-        await UPDATE(OnChainAssets)
-          .set({
-            currentUtxoRef: txHash + '#0',
-            step: (asset.step ?? 0) + 1,
-            currentHolder: newHolder?.vkh ?? evt.signerVkh
-          })
-          .where({ ID: asset.ID });
+        const outputIdx = asset.scriptAddress
+          ? await chainAdapter.getScriptOutputIndex(txHash, asset.scriptAddress)
+          : 0;
+        // Use targetParticipantId (stored during TransferBatch) for the new holder
+        let newHolderVkh = evt.signerVkh;
+        if (evt.targetParticipantId) {
+          const target = await run(SELECT.one.from(Participants).where({ ID: evt.targetParticipantId }));
+          if (target?.vkh) newHolderVkh = target.vkh;
+        }
+        await run(UPDATE(OnChainAssets).set({
+          currentUtxoRef: txHash + '#' + outputIdx,
+          step: (asset.step ?? 0) + 1,
+          currentHolder: newHolderVkh
+        }).where({ ID: asset.ID }));
       }
-      await UPDATE(Batches)
-        .set({ status: 'IN_TRANSIT' })
-        .where({ ID: evt.batch_ID });
+      await run(UPDATE(Batches).set({ status: 'IN_TRANSIT' }).where({ ID: evt.batch_ID }));
     }
 
     if (evt.eventType === 'DELIVER') {
-      const asset = await SELECT.one.from(OnChainAssets).where({ batch_ID: evt.batch_ID });
+      const asset = await run(SELECT.one.from(OnChainAssets).where({ batch_ID: evt.batch_ID }));
       if (asset) {
-        // NFT is now at the holder's wallet, not the script address
-        await UPDATE(OnChainAssets)
-          .set({
-            currentUtxoRef: null,
-            step: (asset.step ?? 0) + 1
-          })
-          .where({ ID: asset.ID });
+        await run(UPDATE(OnChainAssets).set({
+          currentUtxoRef: null,
+          step: (asset.step ?? 0) + 1
+        }).where({ ID: asset.ID }));
       }
-      await UPDATE(Batches)
-        .set({ status: 'DELIVERED' })
-        .where({ ID: evt.batch_ID });
+      await run(UPDATE(Batches).set({ status: 'DELIVERED' }).where({ ID: evt.batch_ID }));
     }
 
     if (evt.eventType === 'DOCUMENT_ANCHOR' && evt.buildId) {
-      await UPDATE(DocumentAnchors)
+      await run(UPDATE(DocumentAnchors)
         .set({ onChainTxHash: txHash, status: 'CONFIRMED' })
-        .where({ buildId: evt.buildId });
+        .where({ buildId: evt.buildId }));
     }
   }
 
   /**
-   * Start periodic polling for SUBMITTED transactions.
-   * Runs directly against the DB to avoid service-entity resolution issues
-   * when called outside a request context.
+   * Post-confirmation hook called from SubmitSigned (within request context).
    */
+  private async _onConfirmed(evt: any, txHash: string) {
+    await this._applyConfirmationSideEffects(evt, txHash);
+  }
+
+  /**
+   * Start periodic polling for SUBMITTED transactions.
+   */
+  private _pollingInterval: ReturnType<typeof setInterval> | null = null;
+
   private _startPolling() {
+    // Prevent duplicate polling on hot-reload
+    if (this._pollingInterval) {
+      clearInterval(this._pollingInterval);
+      this._pollingInterval = null;
+    }
+
     const poll = async () => {
       try {
         const db = await cds.connect.to('db');
-        const { ProofEvents, OnChainAssets, Batches, Participants, DocumentAnchors } = cds.entities('trace');
+        const { ProofEvents } = cds.entities('trace');
+        const run = db.run.bind(db);
 
-        const submitted = await db.run(SELECT.from(ProofEvents).where({ status: 'SUBMITTED' }));
+        const submitted = await run(SELECT.from(ProofEvents).where({ status: 'SUBMITTED' }));
         if (!submitted.length) return;
 
         let confirmed = 0, failed = 0;
@@ -1026,67 +1064,26 @@ export default class TraceService extends cds.ApplicationService {
           const now = new Date().toISOString();
 
           if (check.status === 'confirmed') {
-            await db.run(UPDATE(ProofEvents)
-              .set({ status: 'CONFIRMED', onChainTxHash: check.txHash ?? evt.onChainTxHash, lastCheckedAt: now })
+            const txHash = check.txHash ?? evt.onChainTxHash;
+            await run(UPDATE(ProofEvents)
+              .set({ status: 'CONFIRMED', onChainTxHash: txHash, lastCheckedAt: now })
               .where({ ID: evt.ID }));
 
-            // Post-confirmation side effects
-            const txHash = check.txHash ?? evt.onChainTxHash;
-            if (evt.eventType === 'MINT') {
-              await db.run(UPDATE(OnChainAssets).set({ currentUtxoRef: txHash + '#0' }).where({ batch_ID: evt.batch_ID }));
-              const mintUpdate: any = { status: 'MINTED' };
-              if (evt.signerVkh) {
-                const minter = await db.run(SELECT.one.from(Participants).where({ vkh: evt.signerVkh, isActive: true }));
-                if (minter) {
-                  const batch = await db.run(SELECT.one.from(Batches).where({ ID: evt.batch_ID }));
-                  if (!batch?.manufacturer_ID) mintUpdate.manufacturer_ID = minter.ID;
-                  if (!batch?.currentHolder_ID) mintUpdate.currentHolder_ID = minter.ID;
-                }
-              }
-              await db.run(UPDATE(Batches).set(mintUpdate).where({ ID: evt.batch_ID }));
-            }
-            if (evt.eventType === 'TRANSFER') {
-              const asset = await db.run(SELECT.one.from(OnChainAssets).where({ batch_ID: evt.batch_ID }));
-              if (asset) {
-                const batch = await db.run(SELECT.one.from(Batches).where({ ID: evt.batch_ID }));
-                const newHolder = batch?.currentHolder_ID
-                  ? await db.run(SELECT.one.from(Participants).where({ ID: batch.currentHolder_ID }))
-                  : null;
-                await db.run(UPDATE(OnChainAssets).set({
-                  currentUtxoRef: txHash + '#0',
-                  step: (asset.step ?? 0) + 1,
-                  currentHolder: newHolder?.vkh ?? evt.signerVkh
-                }).where({ ID: asset.ID }));
-              }
-              await db.run(UPDATE(Batches).set({ status: 'IN_TRANSIT' }).where({ ID: evt.batch_ID }));
-            }
-            if (evt.eventType === 'DELIVER') {
-              const asset = await db.run(SELECT.one.from(OnChainAssets).where({ batch_ID: evt.batch_ID }));
-              if (asset) {
-                await db.run(UPDATE(OnChainAssets).set({
-                  currentUtxoRef: null,
-                  step: (asset.step ?? 0) + 1
-                }).where({ ID: asset.ID }));
-              }
-              await db.run(UPDATE(Batches).set({ status: 'DELIVERED' }).where({ ID: evt.batch_ID }));
-            }
-            if (evt.eventType === 'DOCUMENT_ANCHOR' && evt.buildId) {
-              await db.run(UPDATE(DocumentAnchors).set({ onChainTxHash: txHash, status: 'CONFIRMED' }).where({ buildId: evt.buildId }));
-            }
+            await this._applyConfirmationSideEffects(evt, txHash, run);
             confirmed++;
           } else if (check.status === 'failed') {
-            await db.run(UPDATE(ProofEvents)
+            await run(UPDATE(ProofEvents)
               .set({ status: 'FAILED', errorMessage: check.errorMessage, lastCheckedAt: now })
               .where({ ID: evt.ID }));
             failed++;
           } else {
-            await db.run(UPDATE(ProofEvents).set({ lastCheckedAt: now }).where({ ID: evt.ID }));
+            await run(UPDATE(ProofEvents).set({ lastCheckedAt: now }).where({ ID: evt.ID }));
           }
         }
 
         // Also check SUBMITTED registrations
         const { Participants: PollingParticipants } = cds.entities('trace');
-        const submittedRegs = await db.run(
+        const submittedRegs = await run(
           SELECT.from(PollingParticipants).where({ registrationStatus: 'SUBMITTED' })
         );
         for (const reg of submittedRegs) {
@@ -1096,14 +1093,14 @@ export default class TraceService extends cds.ApplicationService {
           const now = new Date().toISOString();
 
           if (check.status === 'confirmed') {
-            await db.run(UPDATE(PollingParticipants).set({
+            await run(UPDATE(PollingParticipants).set({
               registrationStatus: 'CONFIRMED',
               registrationTxHash: check.txHash ?? reg.registrationTxHash,
               registeredAt: now
             }).where({ ID: reg.ID }));
             confirmed++;
           } else if (check.status === 'failed') {
-            await db.run(UPDATE(PollingParticipants).set({
+            await run(UPDATE(PollingParticipants).set({
               registrationStatus: 'FAILED',
               registrationErrorMessage: check.errorMessage
             }).where({ ID: reg.ID }));
@@ -1120,7 +1117,7 @@ export default class TraceService extends cds.ApplicationService {
     // Start after a short delay to let the server fully boot
     setTimeout(() => {
       LOG.info(`Starting tx confirmation polling (every ${POLL_INTERVAL_MS / 1000}s)`);
-      setInterval(poll, POLL_INTERVAL_MS);
+      this._pollingInterval = setInterval(poll, POLL_INTERVAL_MS);
     }, 5000);
   }
 }

@@ -189,6 +189,29 @@ export function toHex(str: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Find the output index of a confirmed transaction at a given address.
+ * Falls back to 0 if the address is not found in the outputs.
+ */
+export async function getScriptOutputIndex(txHash: string, scriptAddress: string): Promise<number> {
+  try {
+    const srv = await oDataSrv();
+    const tx = await srv.send('GetTransactionByHash', { hash: txHash });
+    if (tx?.outputs) {
+      for (const out of tx.outputs) {
+        if (out.address === scriptAddress) return out.outputIndex ?? 0;
+      }
+    }
+  } catch (err: any) {
+    // Fallback — tx not yet indexed or address not found
+  }
+  return 0;
+}
+
+// ---------------------------------------------------------------------------
 // Public ChainAdapter API — via ODATANO CDS services
 // ---------------------------------------------------------------------------
 

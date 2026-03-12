@@ -147,7 +147,7 @@ sap.ui.define([], function () {
         var sRawHex = _stripCborByteString(sAddrHex);
         _addressHex = sRawHex;
         _addressBech32 = _hexToBech32(sAddrHex);
-        // Shelley address: 1 byte header + 28 bytes payment key hash
+        // Shelley base or enterprise address (type 0x0_ or 0x6_): 1 byte header + 28 bytes payment key hash
         _vkh = sRawHex.slice(2, 58);
 
         return {

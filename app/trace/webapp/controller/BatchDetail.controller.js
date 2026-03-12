@@ -371,9 +371,8 @@ sap.ui.define([
       }
 
       // Get optional notes and reason
-      var sViewId = this.getView().getId();
-      var oReason = sap.ui.getCore().byId(sViewId + "--transferReason");
-      var oNotes = sap.ui.getCore().byId(sViewId + "--transferNotes");
+      var oReason = this.byId("transferReason");
+      var oNotes = this.byId("transferNotes");
 
       var sReason = oReason ? oReason.getSelectedKey() : "";
       var sNotes = oNotes ? oNotes.getValue() : "";
@@ -404,15 +403,14 @@ sap.ui.define([
         }.bind(this));
       }
       this._pAnchorDialog.then(function (oDialog) {
-        var sViewId = this.getView().getId();
         // Reset dialog fields
-        var oUploader = sap.ui.getCore().byId(sViewId + "--anchorFileUploader");
+        var oUploader = this.byId("anchorFileUploader");
         if (oUploader) oUploader.clear();
-        var oInfo = sap.ui.getCore().byId(sViewId + "--anchorFileInfo");
+        var oInfo = this.byId("anchorFileInfo");
         if (oInfo) oInfo.setText("");
-        var oHash = sap.ui.getCore().byId(sViewId + "--anchorHash");
+        var oHash = this.byId("anchorHash");
         if (oHash) { oHash.setValue(""); oHash.setEditable(true); }
-        var oDocType = sap.ui.getCore().byId(sViewId + "--anchorDocType");
+        var oDocType = this.byId("anchorDocType");
         if (oDocType) oDocType.setValue("");
         oDialog.open();
       }.bind(this));
@@ -423,10 +421,9 @@ sap.ui.define([
       if (!aFiles || aFiles.length === 0) return;
 
       var oFile = aFiles[0];
-      var sViewId = this.getView().getId();
-      var oHashInput = sap.ui.getCore().byId(sViewId + "--anchorHash");
-      var oFileInfo = sap.ui.getCore().byId(sViewId + "--anchorFileInfo");
-      var oDocTypeInput = sap.ui.getCore().byId(sViewId + "--anchorDocType");
+      var oHashInput = this.byId("anchorHash");
+      var oFileInfo = this.byId("anchorFileInfo");
+      var oDocTypeInput = this.byId("anchorDocType");
 
       // Show file info
       var sSize = oFile.size < 1024 * 1024
@@ -467,10 +464,9 @@ sap.ui.define([
     },
 
     onAnchorConfirm: function () {
-      var sViewId = this.getView().getId();
       var oContext = this.getView().getBindingContext();
       var sBatchId = oContext.getProperty("ID");
-      var sHash = sap.ui.getCore().byId(sViewId + "--anchorHash").getValue();
+      var sHash = this.byId("anchorHash").getValue();
 
       if (!sHash) {
         MessageBox.warning("Please enter the document hash or upload a file.");
@@ -479,8 +475,8 @@ sap.ui.define([
 
       this._pAnchorDialog.then(function (d) { d.close(); });
 
-      var sDocType = sap.ui.getCore().byId(sViewId + "--anchorDocType").getValue();
-      var sVisibility = sap.ui.getCore().byId(sViewId + "--anchorVisibility").getSelectedKey();
+      var sDocType = this.byId("anchorDocType").getValue();
+      var sVisibility = this.byId("anchorVisibility").getSelectedKey();
 
       this._signAndSubmit("AnchorDocument", {
         batchId: sBatchId,
@@ -510,17 +506,16 @@ sap.ui.define([
       }
       this._pRecallDialog.then(function (oDialog) {
         // Clear previous reason
-        var oReason = sap.ui.getCore().byId(that.getView().getId() + "--recallReason");
+        var oReason = that.byId("recallReason");
         if (oReason) oReason.setValue("");
         oDialog.open();
       });
     },
 
     onRecallConfirm: function () {
-      var sViewId = this.getView().getId();
       var oContext = this.getView().getBindingContext();
       var sBatchId = oContext.getProperty("ID");
-      var oReasonCtrl = sap.ui.getCore().byId(sViewId + "--recallReason");
+      var oReasonCtrl = this.byId("recallReason");
       var sReason = oReasonCtrl ? oReasonCtrl.getValue() : "";
 
       if (!sReason) {

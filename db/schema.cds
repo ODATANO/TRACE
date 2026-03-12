@@ -40,6 +40,7 @@ entity OnChainAssets {
   assetName        : String(64);
   fingerprint      : String(44);  // CIP-14 asset fingerprint
   currentUtxoRef   : String(80);  // txHash#index
+  scriptAddress    : String(120); // enterprise script address (for UTxO index lookup)
   datumHash        : String(64);
   step             : Integer default 0;
   manufacturerVkh  : String(56);  // vkh of original manufacturer (set at mint, never changes)
@@ -53,6 +54,7 @@ entity ProofEvents {
   payloadDigest    : String(64);  // SHA-256 hex
   schema           : String(100); // schema identifier
   signerVkh        : String(56);
+  targetParticipantId : String(36);  // target participant ID for TRANSFER retries
   onChainTxHash    : String(64);
   status           : String enum { PENDING; SUBMITTED; CONFIRMED; FAILED } default 'PENDING';
   buildId          : String(36);  // ODATANO TransactionBuilds.id
