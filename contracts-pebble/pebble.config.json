@@ -1,0 +1,5 @@
+{
+  "entry": "src/index.pebble",
+  "outDir": "./out",
+  "removeTraces": true
+}

@@ -1,0 +1,72 @@
+// TRACE Pharmaceutical Supply Chain Validator
+// Pebble port of contracts/validators/pharma_trace.ak
+
+struct ChainOfCustody {
+    manufacturer: PubKeyHash,
+    current_holder: PubKeyHash,
+    batch_id: bytes,
+    step: int
+}
+
+contract PharmaTrace {
+    param manufacturer: PubKeyHash;
+
+    // Mint: manufacturer mints exactly 1 NFT per batch
+    // tokenName (= batchId) passed as redeemer for on-chain verification
+    mint mintBatch(tokenName: bytes) {
+        const { tx, policy } = context;
+
+        // Manufacturer must sign the transaction
+        assert tx.requiredSigners.includes(this.manufacturer);
+
+        // Verify that the specified token under our policy has quantity == 1
+        assert tx.mint.amountOf(policy, tokenName) == 1;
+    }
+
+    // Spend: transfer custody to next holder
+    spend transfer(next_holder: PubKeyHash) {
+        const {
+            tx,
+            optionalDatum: Some{
+                value: {
+                    manufacturer,
+                    current_holder,
+                    batch_id,
+                    step
+                } as ChainOfCustody
+            }
+        } = context;
+
+        // Current holder must sign
+        assert tx.requiredSigners.includes(current_holder);
+
+        // A continuing output must exist with an updated datum
+        assert tx.outputs.some((output) => {
+            match output.datum {
+                when InlineDatum{ datum: raw }: {
+                    const nc = raw as ChainOfCustody;
+                    return nc.manufacturer == manufacturer
+                        && nc.current_holder == next_holder
+                        && nc.batch_id == batch_id
+                        && nc.step == step + 1;
+                }
+                else {
+                    return false;
+                }
+            }
+        });
+    }
+
+    // Spend: deliver — NFT leaves script address to holder's wallet
+    // No continuing output check needed
+    spend deliver() {
+        const {
+            tx,
+            optionalDatum: Some{
+                value: { current_holder } as ChainOfCustody
+            }
+        } = context;
+
+        assert tx.requiredSigners.includes(current_holder);
+    }
+}

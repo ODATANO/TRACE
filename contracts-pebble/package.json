@@ -1,0 +1,16 @@
+{
+  "name": "trace-pebble-contracts",
+  "version": "0.0.1",
+  "description": "TRACE pharmaceutical supply chain smart contracts in Pebble",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/compile.js && node scripts/flat-to-cbor.js",
+    "compile": "node scripts/compile.js",
+    "convert": "node scripts/flat-to-cbor.js"
+  },
+  "dependencies": {
+    "@harmoniclabs/pebble": "^0.1.4",
+    "@harmoniclabs/pebble-cli": "^0.1.0"
+  }
+}
