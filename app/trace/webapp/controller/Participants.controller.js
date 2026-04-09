@@ -291,6 +291,14 @@ sap.ui.define([
         });
     },
 
+    formatOwnHighlight: function (sVkh, sWalletVkh, bConnected) {
+      return (bConnected && sVkh && sWalletVkh && sVkh === sWalletVkh) ? "Success" : "None";
+    },
+
+    isOwnParticipant: function (sVkh, sWalletVkh, bConnected) {
+      return !!(bConnected && sVkh && sWalletVkh && sVkh === sWalletVkh);
+    },
+
     formatRegistrationState: function (sStatus) {
       switch (sStatus) {
         case "CONFIRMED":  return "Success";

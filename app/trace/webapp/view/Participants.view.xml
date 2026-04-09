@@ -31,7 +31,7 @@
       </columns>
 
       <items>
-        <ColumnListItem>
+        <ColumnListItem highlight="{parts: ['vkh', 'wallet>/vkh', 'wallet>/connected'], formatter: '.formatOwnHighlight'}">
           <cells>
             <Input value="{name}" change="onFieldChange"/>
             <Select selectedKey="{role}" change="onFieldChange" forceSelection="false">

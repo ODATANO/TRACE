@@ -48,6 +48,9 @@ sap.ui.define([
         oWalletModel.setProperty("/vkh", "");
         oWalletModel.setProperty("/participantId", "");
         oWalletModel.setProperty("/participantName", "");
+        // Clear selection so the same wallet can be re-selected
+        var oList = this.byId("welcomeWalletList");
+        if (oList) { oList.removeSelections(true); }
         this._navToWelcome();
         return;
       }

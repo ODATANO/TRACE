@@ -195,14 +195,24 @@ export function toHex(str: string): string {
 // ---------------------------------------------------------------------------
 
 /**
+ * Run a callback against a CDS service, using the current request's user
+ * context when available (avoids nested SQLite transactions / deadlocks).
+ * Falls back to cds.User.privileged for background contexts (e.g. polling).
+ */
+async function srvRun<T>(srv: any, fn: (s: any) => Promise<T>): Promise<T> {
+  if (cds.context?.user) return fn(srv);
+  return srv.tx({ user: cds.User.privileged }, (tx: any) => fn(tx));
+}
+
+/**
  * Find the output index of a confirmed transaction at a given address.
  * Falls back to 0 if the address is not found in the outputs.
  */
 export async function getScriptOutputIndex(txHash: string, scriptAddress: string): Promise<number> {
   try {
     const srv = await oDataSrv();
-    return await srv.tx({ user: cds.User.privileged }, async (tx: any) => {
-      const result = await tx.send('GetTransactionByHash', { hash: txHash });
+    return await srvRun(srv, async (s: any) => {
+      const result = await s.send('GetTransactionByHash', { hash: txHash });
       if (result?.outputs) {
         for (const out of result.outputs) {
           if (out.address === scriptAddress) return out.outputIndex ?? 0;
@@ -461,8 +471,8 @@ export async function submitSigned(signingRequestId: string, walletWitnessCbor: 
 export async function checkSubmissionStatus(submissionId: string): Promise<SubmissionStatus> {
   const srv = await txSrv();
   try {
-    return await srv.tx({ user: cds.User.privileged }, async (tx: any) => {
-      const result = await tx.send({
+    return await srvRun(srv, async (s: any) => {
+      const result = await s.send({
         event: 'CheckSubmissionStatus',
         data: {},
         params: [{ id: submissionId }]
@@ -490,8 +500,8 @@ export async function checkSubmissionStatus(submissionId: string): Promise<Submi
 export async function isTxConfirmedOnChain(txHash: string): Promise<boolean> {
   try {
     const srv = await oDataSrv();
-    return await srv.tx({ user: cds.User.privileged }, async (tx: any) => {
-      const result = await tx.send('GetTransactionByHash', { hash: txHash });
+    return await srvRun(srv, async (s: any) => {
+      const result = await s.send('GetTransactionByHash', { hash: txHash });
       return !!result?.blockHash;
     });
   } catch (err: any) {
@@ -527,10 +537,10 @@ export async function anchorDocument(params: AnchorParams): Promise<AnchorResult
  */
 export async function getWalletAssets(walletAddress: string): Promise<any[]> {
   const srv = await oDataSrv();
-  return srv.tx({ user: cds.User.privileged }, async (tx: any) => {
+  return srvRun(srv, async (s: any) => {
     // Trigger address indexing — GetAddressByBech32 fetches from blockchain on cache miss
-    await tx.send('GetAddressByBech32', { address: walletAddress });
-    return tx.send('GetAssetsByAddress', { address: walletAddress });
+    await s.send('GetAddressByBech32', { address: walletAddress });
+    return s.send('GetAssetsByAddress', { address: walletAddress });
   });
 }
 
@@ -540,8 +550,8 @@ export async function getWalletAssets(walletAddress: string): Promise<any[]> {
 export async function getTxStatus(txHash: string): Promise<TxStatus> {
   const srv = await oDataSrv();
   try {
-    return await srv.tx({ user: cds.User.privileged }, async (tx: any) => {
-      const result = await tx.send('GetTransactionByHash', { hash: txHash });
+    return await srvRun(srv, async (s: any) => {
+      const result = await s.send('GetTransactionByHash', { hash: txHash });
       return { status: 'confirmed' as const, block: result?.blockHash ?? null, slot: result?.slot ?? null };
     });
   } catch (err: any) {
