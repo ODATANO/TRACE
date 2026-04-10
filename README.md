@@ -3,7 +3,7 @@
 
 TRACE is Example SAP FIORI Application for a pharmaceutical supply chain tracking system built on [SAP CAP](https://cap.cloud.sap/) and the [Cardano](https://cardano.org/) blockchain. It provides tamper-proof chain-of-custody for drug batches from manufacturer to pharmacy, using NFTs as on-chain proof and CIP-30 browser wallets for transaction signing.
 
-**Blockchain integration via [ODATANO](https://github.com/ODATANO/ODATANO)** — a CAP plugin that exposes Cardano as OData V4 services. 
+**Blockchain integration via [ODATANO](https://github.com/ODATANO/ODATANO)** a CAP plugin that exposes Cardano as OData V4 services. 
 
 ## Architecture
 
@@ -30,6 +30,9 @@ TRACE is Example SAP FIORI Application for a pharmaceutical supply chain trackin
 - **Transaction Monitoring** — 30-second background polling with automatic PENDING → CONFIRMED/FAILED transitions
 - **Retry Mechanics** — Failed transactions can be rebuilt and resubmitted
 
+## App Walkthrough
+For a detailed walkthrough of the TRACE application, including screenshots and explanations of each feature, see the [TRACE Application Walkthrough](https://github.com/ODATANO/TRACE/blob/main/docs/APP_WALKTHROUGH.MD)
+  
 ## Quick Start
 
 ### Prerequisites
