@@ -15,13 +15,12 @@ sap.ui.define([
     onInit: function () {
       // Local view model for tab counts and search state
       this.getView().setModel(new JSONModel({
-        allCount: 0,
         mineCount: 0,
         incomingCount: 0,
         searchQuery: ""
       }), "viewModel");
 
-      // Suspend wallet-gated list bindings until participantId is available
+      // Suspend list bindings until participantId is available
       var that = this;
       this.getView().attachAfterRendering(function () {
         that._suspendList("batchTableMine");
@@ -55,9 +54,6 @@ sap.ui.define([
       var sParticipantId = oWalletModel.getProperty("/participantId");
       var sSearchQuery = this.getView().getModel("viewModel").getProperty("/searchQuery");
 
-      // Tab: All — search filter only
-      this._applyFilterToList("batchTableAll", [], sSearchQuery);
-
       // Tab: My Batches
       if (sParticipantId) {
         this._applyFilterToList("batchTableMine", [
@@ -75,14 +71,6 @@ sap.ui.define([
         ], sSearchQuery);
       } else {
         this._suspendList("batchTableIncoming");
-      }
-
-      // If wallet disconnected and on a wallet-gated tab, switch back to "all"
-      if (!sParticipantId) {
-        var oTabBar = this.byId("batchIconTabBar");
-        if (oTabBar && oTabBar.getSelectedKey() !== "all") {
-          oTabBar.setSelectedKey("all");
-        }
       }
     },
 
@@ -180,7 +168,7 @@ sap.ui.define([
 
     onRefresh: function () {
       // Refresh all non-suspended lists
-      ["batchTableAll", "batchTableMine", "batchTableIncoming"].forEach(function (sId) {
+      ["batchTableMine", "batchTableIncoming"].forEach(function (sId) {
         var oList = this.byId(sId);
         if (oList) {
           var oBinding = oList.getBinding("items");
@@ -198,9 +186,7 @@ sap.ui.define([
       var sId = oSource.getId();
       var oViewModel = this.getView().getModel("viewModel");
 
-      if (sId.indexOf("batchTableAll") > -1) {
-        oViewModel.setProperty("/allCount", iTotal);
-      } else if (sId.indexOf("batchTableMine") > -1) {
+      if (sId.indexOf("batchTableMine") > -1) {
         oViewModel.setProperty("/mineCount", iTotal);
       } else if (sId.indexOf("batchTableIncoming") > -1) {
         oViewModel.setProperty("/incomingCount", iTotal);
@@ -283,7 +269,7 @@ sap.ui.define([
       var that = this;
 
       this._resolveManufacturer().then(function (sParticipantId) {
-        var oListBinding = that.byId("batchTableAll").getBinding("items");
+        var oListBinding = that.byId("batchTableMine").getBinding("items");
 
         var oEntry = {
           batchNumber: oData.batchNumber,
@@ -312,7 +298,7 @@ sap.ui.define([
 
       }).catch(function () {
         // No wallet or no matching participant — create without manufacturer
-        var oListBinding = that.byId("batchTableAll").getBinding("items");
+        var oListBinding = that.byId("batchTableMine").getBinding("items");
 
         var oContext = oListBinding.create({
           batchNumber: oData.batchNumber,

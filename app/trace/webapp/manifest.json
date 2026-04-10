@@ -47,6 +47,7 @@
             "vkh": "",
             "participantId": "",
             "participantName": "",
+            "guest": false,
             "wallets": []
           }
         }

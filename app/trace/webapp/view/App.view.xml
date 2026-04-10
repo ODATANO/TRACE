@@ -44,6 +44,13 @@
           </CustomListItem>
         </List>
 
+        <VBox alignItems="Center" class="sapUiMediumMarginTop"
+              visible="{= !${wallet>/connecting}}">
+          <Text text="or" class="sapUiTinyMarginBottom sapThemeMetaText"/>
+          <Link text="Continue as Guest (Verify Only)" press=".onGuestLogin"
+                class="sapUiSmallMarginBottom"/>
+        </VBox>
+
       </VBox>
     </Page>
 
@@ -55,9 +62,9 @@
           <Title text="TRACE" level="H4" class="sapUiSmallMarginBegin"/>
           <ToolbarSpacer/>
           <Button id="walletBtn"
-            text="{wallet>/name}"
-            icon="sap-icon://chain-link"
-            type="Success"
+            text="{= ${wallet>/guest} ? 'Guest' : ${wallet>/name}}"
+            icon="{= ${wallet>/guest} ? 'sap-icon://visitor' : 'sap-icon://chain-link'}"
+            type="{= ${wallet>/guest} ? 'Default' : 'Success'}"
             press="onWalletPress"/>
         </tnt:ToolHeader>
       </tnt:header>
@@ -65,8 +72,10 @@
       <tnt:sideContent>
         <tnt:SideNavigation id="sideNav" selectedKey="batches" itemSelect="onNavSelect">
           <tnt:NavigationList>
-            <tnt:NavigationListItem text="Batches" icon="sap-icon://shipping-status" key="batches"/>
-            <tnt:NavigationListItem text="Participants" icon="sap-icon://group" key="participants"/>
+            <tnt:NavigationListItem text="Batches" icon="sap-icon://shipping-status" key="batches"
+              visible="{= !${wallet>/guest}}"/>
+            <tnt:NavigationListItem text="Participants" icon="sap-icon://group" key="participants"
+              visible="{= !${wallet>/guest}}"/>
             <tnt:NavigationListItem text="Verify" icon="sap-icon://accept" key="verify"/>
           </tnt:NavigationList>
         </tnt:SideNavigation>

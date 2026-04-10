@@ -11,8 +11,23 @@ sap.ui.define([
       var oWalletModel = this.getOwnerComponent().getModel("wallet");
       oWalletModel.setProperty("/connecting", false);
       oWalletModel.setProperty("/error", "");
+      oWalletModel.setProperty("/guest", false);
       var aWallets = CardanoWallet.detect();
       oWalletModel.setProperty("/wallets", aWallets);
+
+      // Route guard: restrict guest users to verify page only
+      var oRouter = this.getOwnerComponent().getRouter();
+      oRouter.attachRouteMatched(this._onRouteGuard, this);
+    },
+
+    _onRouteGuard: function (oEvent) {
+      var oWalletModel = this.getOwnerComponent().getModel("wallet");
+      if (!oWalletModel.getProperty("/guest")) { return; }
+
+      var sRouteName = oEvent.getParameter("name");
+      if (sRouteName !== "verify") {
+        this.getOwnerComponent().getRouter().navTo("verify");
+      }
     },
 
     /** Navigate from welcome to main app */
@@ -36,8 +51,25 @@ sap.ui.define([
       oRouter.navTo(sKey);
     },
 
+    onGuestLogin: function () {
+      var oWalletModel = this.getOwnerComponent().getModel("wallet");
+      oWalletModel.setProperty("/guest", true);
+      this._navToApp();
+      this.getOwnerComponent().getRouter().navTo("verify");
+      // Set side nav selection to verify
+      var oSideNav = this.byId("sideNav");
+      if (oSideNav) { oSideNav.setSelectedKey("verify"); }
+    },
+
     onWalletPress: function (oEvent) {
       var oWalletModel = this.getOwnerComponent().getModel("wallet");
+
+      // Guest mode — return to welcome to connect a wallet
+      if (oWalletModel.getProperty("/guest")) {
+        oWalletModel.setProperty("/guest", false);
+        this._navToWelcome();
+        return;
+      }
 
       if (oWalletModel.getProperty("/connected")) {
         CardanoWallet.disconnect();
@@ -84,6 +116,7 @@ sap.ui.define([
 
       CardanoWallet.connect(sWalletId)
         .then(function (oInfo) {
+          oWalletModel.setProperty("/guest", false);
           oWalletModel.setProperty("/connected", true);
           oWalletModel.setProperty("/name", oInfo.name);
           oWalletModel.setProperty("/address", oInfo.address);
@@ -109,6 +142,7 @@ sap.ui.define([
 
       CardanoWallet.connect(sWalletName)
         .then(function (oInfo) {
+          oWalletModel.setProperty("/guest", false);
           oWalletModel.setProperty("/connected", true);
           oWalletModel.setProperty("/name", oInfo.name);
           oWalletModel.setProperty("/address", oInfo.address);

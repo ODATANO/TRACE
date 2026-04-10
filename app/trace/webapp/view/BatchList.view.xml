@@ -15,50 +15,10 @@
       </OverflowToolbar>
     </subHeader>
 
-    <IconTabBar id="batchIconTabBar" select="onTabSelect" selectedKey="all">
+    <IconTabBar id="batchIconTabBar" select="onTabSelect" selectedKey="mine">
       <items>
 
-        <!-- Tab 1: All Batches -->
-        <IconTabFilter text="All" icon="sap-icon://list" key="all"
-          count="{viewModel>/allCount}">
-          <List id="batchTableAll"
-            items="{
-              path: '/Batches',
-              parameters: {
-                $expand: 'manufacturer,currentHolder',
-                $orderby: 'modifiedAt desc',
-                $count: true
-              }
-            }"
-            growing="true"
-            growingThreshold="50"
-            mode="SingleSelectMaster"
-            itemPress="onBatchPress"
-            updateFinished="onListUpdateFinished"
-            noDataText="No batches found.">
-            <items>
-              <ObjectListItem
-                type="Navigation"
-                title="{batchNumber}"
-                number="{status}"
-                numberState="{path: 'status', formatter: '.formatStatusState'}"
-                intro="{product}"
-                icon="{path: 'status', formatter: '.formatStatusIcon'}">
-                <attributes>
-                  <ObjectAttribute title="Manufacturer" text="{manufacturer/name}" />
-                  <ObjectAttribute title="Current Holder" text="{currentHolder/name}" />
-                  <ObjectAttribute title="Modified" text="{
-                    path: 'modifiedAt',
-                    type: 'sap.ui.model.type.DateTime',
-                    formatOptions: { style: 'medium' }
-                  }" />
-                </attributes>
-              </ObjectListItem>
-            </items>
-          </List>
-        </IconTabFilter>
-
-        <!-- Tab 2: My Batches -->
+        <!-- Tab 1: My Batches -->
         <IconTabFilter text="My Batches" icon="sap-icon://factory" key="mine"
           count="{viewModel>/mineCount}"
           enabled="{path: 'wallet>/participantId', formatter: '.formatHasParticipant'}">
