@@ -1,7 +1,6 @@
 // Structural UPLC comparison: Aiken pharma_trace vs Pebble PharmaTrace.
-// Both validators implement (different versions of) the TRACE supply chain
-// state machine. This script reports script size, UPLC version, term/builtin
-// statistics, and applied-script hashes for each.
+// Reports script size, UPLC version, term/builtin statistics, and
+// applied-script hashes for each.
 
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -101,9 +100,9 @@ function analyse(name, cborBuf, wrapDepth = 2) {
 
 // Aiken's plutus.json compiledCode is single-CBOR-wrapped flat UPLC.
 // Pebble's script.hex (after flat-to-cbor.js) is double-CBOR-wrapped.
-const aiken = analyse("Aiken pharma_trace (multi-purpose)",
+const aiken = analyse("Aiken pharma_trace",
     loadAikenValidator("pharma_trace.pharma_trace.mint"), 1);
-const pebble = analyse("Pebble PharmaTrace (one-shot, old)", loadPebble(), 2);
+const pebble = analyse("Pebble PharmaTrace", loadPebble(), 2);
 
 function row(label, a, b) {
     return `${label.padEnd(28)} | ${String(a).padStart(20)} | ${String(b).padStart(20)}`;
@@ -143,6 +142,4 @@ for (const b of sortedBuiltins.slice(0, 30)) {
 }
 console.log("");
 
-console.log("Note: Aiken validator currently implements counter-pattern;");
-console.log("Pebble still implements old one-shot pattern. They have different");
-console.log("policy IDs and are not behaviourally equivalent.");
+console.log("Behavioural equivalence: see docs/differential-equivalence.md.");

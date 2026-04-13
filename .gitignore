@@ -48,6 +48,3 @@ artifacts/
 build/
 # Aiken's default documentation export
 
-docs/differential-equivalence.md
-docs/pebble-int-to-bytes-bug.md
-docs/uplc-comparison.md

@@ -2,9 +2,8 @@
 // validators against identical Plutus V3 ScriptContexts and compare
 // accept/reject outcomes.
 //
-// This is *not* a proof of equivalence (that would require exhaustive
-// or symbolic testing) — it's a sanity check that both validators agree
-// on a curated set of representative scenarios per endpoint.
+// Not a proof of equivalence (exhaustive/symbolic testing would be
+// required) — a curated set of representative scenarios per endpoint.
 
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -45,8 +44,8 @@ function loadPebble() {
     return new UPLCDecoder(flat).decodeProgram();
 }
 
-// Aiken builds three validator entries (mint, spend, else) — same UPLC, three names.
-// Pebble has one entry. Use the .mint Aiken view as canonical.
+// Aiken emits three validator entries (mint, spend, else) sharing the same
+// UPLC. Pebble has one entry. The .mint Aiken view is used as canonical.
 const aikenProgram = loadAiken("pharma_trace.pharma_trace.mint");
 const pebbleProgram = loadPebble();
 
@@ -56,11 +55,9 @@ const MFR_VKH       = Buffer.alloc(28, 0x11);
 const HOLDER_B_VKH  = Buffer.alloc(28, 0x22);
 const SEED_TX_HASH  = Buffer.alloc(32, 0x44);
 const SEED_OUT_IDX  = 0;
-// Policy ID is derived from the applied script. For these tests the script
-// hash will not be the actual policy because we craft synthetic contexts —
-// but the validator only compares it against the value flowing through
-// `context.policy` / output addresses, so we pick a stable placeholder and
-// use it consistently throughout each test.
+// Policy ID placeholder. The validator only compares this against the value
+// flowing through `context.policy` and output addresses; the synthetic
+// contexts use this constant consistently throughout.
 const POLICY        = Buffer.alloc(28, 0x33);
 const COUNTER_TX    = Buffer.alloc(32, 0x66);
 const BATCH_TX      = Buffer.alloc(32, 0x55);
