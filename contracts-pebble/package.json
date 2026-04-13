@@ -7,10 +7,11 @@
   "scripts": {
     "build": "node scripts/compile.js && node scripts/flat-to-cbor.js",
     "compile": "node scripts/compile.js",
-    "convert": "node scripts/flat-to-cbor.js"
+    "convert": "node scripts/flat-to-cbor.js",
+    "check": "node scripts/sanity-check.js"
   },
   "dependencies": {
-    "@harmoniclabs/pebble": "^0.1.4",
+    "@harmoniclabs/pebble": "^0.1.6",
     "@harmoniclabs/pebble-cli": "^0.1.0"
   }
 }
