@@ -2,13 +2,27 @@ using {trace} from '../db/schema';
 
 service TraceService @(path: '/odata/v4/trace') {
 
-  entity Participants    as projection on trace.Participants;
-  entity Batches         as projection on trace.Batches;
-  entity ProofEvents     as projection on trace.ProofEvents;
-  entity OnChainAssets   as projection on trace.OnChainAssets;
-  entity DocumentAnchors as projection on trace.DocumentAnchors;
+  entity Participants         as projection on trace.Participants;
+  entity Batches              as projection on trace.Batches;
+  entity ProofEvents          as projection on trace.ProofEvents;
+  entity OnChainAssets        as projection on trace.OnChainAssets;
+  entity DocumentAnchors      as projection on trace.DocumentAnchors;
+  entity ManufacturerCounters as projection on trace.ManufacturerCounters;
 
   // --- Domain Actions ---
+
+  // Bootstrap the per-manufacturer counter NFT (one-shot). Must run once before minting any batches.
+  action   InitManufacturerCounter(walletAddress: String, walletVkh: String) returns {
+    counterId        : UUID;
+    policyId         : String;
+    scriptAddress    : String;
+    seedTxHash       : String;
+    seedIdx          : Integer;
+    unsignedCbor     : LargeString;
+    buildId          : String;
+    signingRequestId : String;
+    txBodyHash       : String;
+  };
 
   // Mint a batch NFT on Cardano (manufacturer only)
   action   MintBatchNft(batchId: UUID, walletAddress: String, walletVkh: String)                returns {

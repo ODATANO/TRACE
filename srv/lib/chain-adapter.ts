@@ -11,11 +11,39 @@ const LOG = cds.log('chain-adapter');
 interface PlutusValidator { title: string; compiledCode: string }
 interface PlutusJson { validators: PlutusValidator[] }
 
+export interface CounterState {
+  policyId: string;
+  scriptAddress: string;
+  seedTxHash: string;
+  seedIdx: number;
+  currentN: number;
+  counterTxHash: string;
+  counterIdx: number;
+}
+
 export interface MintParams {
   senderAddress: string;
   manufacturerVkh: string;
-  batchId: string;
+  batchId: string;      // human-facing batch number, audit only; on-chain name is intToBytes(n+1)
   originDigest: string;
+  counter: CounterState;
+}
+
+export interface InitCounterParams {
+  senderAddress: string;
+  manufacturerVkh: string;
+  seedTxHash: string;
+  seedIdx: number;
+}
+
+export interface InitCounterResult {
+  buildId: string;
+  unsignedCbor: string;
+  txBodyHash: string;
+  policyId: string;
+  scriptAddress: string;
+  seedTxHash: string;
+  seedIdx: number;
 }
 
 export interface MintResult {
@@ -23,7 +51,8 @@ export interface MintResult {
   unsignedCbor: string;
   txBodyHash: string;
   policyId: string;
-  assetName: string;
+  assetName: string;       // hex-encoded intToBytes(n) — on-chain asset name
+  batchNumberOnChain: number;
   fingerprint: string;
   scriptAddress: string;
   datum: string;
@@ -38,6 +67,8 @@ export interface TransferParams {
   currentStep: number;
   scriptTxHash: string;
   scriptOutputIndex: number;
+  seedTxHash: string;
+  seedIdx: number;
 }
 
 export interface TransferResult {
@@ -54,6 +85,8 @@ export interface DeliverParams {
   currentStep: number;
   scriptTxHash: string;
   scriptOutputIndex: number;
+  seedTxHash: string;
+  seedIdx: number;
 }
 
 export interface SigningRequestResult {
@@ -175,10 +208,17 @@ export function buildChainOfCustodyDatum(
   });
 }
 
-export function buildTransferRedeemer(nextHolderVkh: string): string {
+// Validator ABI: Transfer { input_idx: Int, output_idx: Int }.
+// input_idx is resolved by ODATANO (v1.2.0 __INPUT_IDX:... placeholder) to the
+// lexicographically-sorted position of the script UTxO. output_idx = 0 because
+// the continuing output is always the primary one (ODATANO appends extras/change after).
+export function buildTransferRedeemer(scriptTxHash: string, scriptOutputIndex: number): string {
   return JSON.stringify({
     constructor: 0,
-    fields: [{ bytes: nextHolderVkh }]
+    fields: [
+      { int: `__INPUT_IDX:${scriptTxHash}#${scriptOutputIndex}__` },
+      { int: 0 }
+    ]
   });
 }
 
@@ -188,6 +228,64 @@ export function buildDeliverRedeemer(): string {
 
 export function toHex(str: string): string {
   return Buffer.from(str, 'utf8').toString('hex');
+}
+
+// ---------------------------------------------------------------------------
+// Shared builders for the counter-pattern ABI (Aiken + Pebble)
+// Aiken indices: Datum ChainOfCustody=0, MintCounter=1.
+// Mint redeemer: InitCounter=0, MintBatch=1, Burn=2.
+// Spend redeemer: Transfer=0, Deliver=1, IncrementCounter=2.
+// Script params: (manufacturer: VKH, seed: OutputReference).
+// ---------------------------------------------------------------------------
+
+export const COUNTER_ASSET_NAME_HEX = '';
+
+// Minimal big-endian encoding — mirrors Aiken `int_to_bytes`:
+//   0 -> ""           (empty — reserved for counter, not batches)
+//   1 -> "01"
+//   256 -> "0100"
+export function intToBytes(n: number): string {
+  if (!Number.isInteger(n) || n < 0) throw new Error(`intToBytes: ${n} must be a non-negative integer`);
+  if (n === 0) return '';
+  let hex = '';
+  let v = n;
+  while (v > 0) {
+    hex = (v % 256).toString(16).padStart(2, '0') + hex;
+    v = Math.floor(v / 256);
+  }
+  return hex;
+}
+
+export function buildMintCounterDatum(manufacturerVkh: string, n: number): string {
+  return JSON.stringify({
+    constructor: 1,
+    fields: [{ bytes: manufacturerVkh }, { int: n }]
+  });
+}
+
+export function buildInitCounterRedeemer(): string {
+  return JSON.stringify({ constructor: 0, fields: [] });
+}
+
+export function buildMintBatchRedeemer(counterInputIdx: number): string {
+  return JSON.stringify({ constructor: 1, fields: [{ int: counterInputIdx }] });
+}
+
+export function buildBurnRedeemer(): string {
+  return JSON.stringify({ constructor: 2, fields: [] });
+}
+
+export function buildIncrementCounterRedeemer(ownInputIdx: number): string {
+  return JSON.stringify({ constructor: 2, fields: [{ int: ownInputIdx }] });
+}
+
+// scriptParamsJson for the parameterised validator: [mfrVkh, seed OutputReference].
+// OutputReference = Constr 0 { transaction_id: ByteArray, output_index: Int }.
+export function buildScriptParams(manufacturerVkh: string, seedTxHash: string, seedIdx: number): string {
+  return JSON.stringify([
+    { bytes: manufacturerVkh },
+    { constructor: 0, fields: [{ bytes: seedTxHash }, { int: seedIdx }] }
+  ]);
 }
 
 // ---------------------------------------------------------------------------
@@ -226,40 +324,102 @@ export async function getScriptOutputIndex(txHash: string, scriptAddress: string
   }
 }
 
+/**
+ * Find the output index of a confirmed transaction whose value contains a
+ * specific asset `policyId + assetNameHex` (at any quantity ≥ 1). Returns
+ * `null` if not found (tx not indexed yet, or asset absent).
+ */
+export async function getAssetOutputIndex(
+  txHash: string,
+  policyId: string,
+  assetNameHex: string
+): Promise<number | null> {
+  try {
+    const srv = await oDataSrv();
+    return await srvRun(srv, async (s: any) => {
+      const result = await s.send('GetTransactionByHash', { hash: txHash });
+      if (!result?.outputs) return null;
+      for (const out of result.outputs) {
+        const assets = out.assets ?? out.amount ?? [];
+        for (const a of assets) {
+          const unit = a.unit ?? ((a.policyId ?? '') + (a.assetName ?? ''));
+          if (unit === policyId + assetNameHex) {
+            return out.outputIndex ?? null;
+          }
+        }
+      }
+      return null;
+    });
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Public ChainAdapter API — via ODATANO CDS services
 // ---------------------------------------------------------------------------
 
 /**
- * Mint a batch NFT on Cardano.
- *
- * Uses ODATANO v0.3.12 `lockOnScript` to route the NFT output to the
- * enterprise script address automatically. No two-pass build needed.
+ * Pick a wallet UTxO to use as the one-shot seed for InitCounter.
+ * Returns the first pure-ADA UTxO with >= minLovelace; falls back to the first UTxO.
  */
-export async function mintBatchNft(params: MintParams): Promise<MintResult> {
+export async function pickSeedUtxo(
+  walletAddress: string,
+  minLovelace: bigint = 3_000_000n
+): Promise<{ txHash: string; outputIndex: number }> {
+  const { getCardanoClient } = await import('@odatano/core');
+  const client = getCardanoClient();
+  const addrData: any = await client.getAddress(walletAddress);
+  const utxos: any[] = addrData?.utxos ?? [];
 
+  if (!utxos.length) {
+    throw new Error(`No UTxOs at ${walletAddress} — fund the wallet before InitCounter`);
+  }
+
+  const pureAda = utxos.find(u => {
+    const amounts: any[] = u.amount ?? [];
+    const lovelaceEntry = amounts.find(a => a.unit === 'lovelace');
+    const hasOnlyLovelace = amounts.length === 1 && !!lovelaceEntry;
+    const lovelace = BigInt(lovelaceEntry?.quantity ?? 0);
+    return hasOnlyLovelace && lovelace >= minLovelace;
+  });
+  const chosen = pureAda ?? utxos[0];
+
+  const txHash = chosen.txHash ?? chosen.transactionHash ?? chosen.tx_hash ?? chosen.hash;
+  const outputIndex = chosen.outputIndex ?? chosen.tx_index ?? chosen.index ?? 0;
+  if (!txHash) throw new Error(`Seed UTxO has no txHash field: ${JSON.stringify(chosen)}`);
+  return { txHash, outputIndex: Number(outputIndex) };
+}
+
+/**
+ * Initialise the per-manufacturer counter NFT (one-shot mint).
+ *
+ * Consumes `seedTxHash#seedIdx` as a forced input (guaranteeing the script is
+ * parameterised by a unique OutputReference → unique policy). Mints the counter
+ * NFT with empty asset name and `MintCounter { n: 0 }` inline datum, locks it
+ * at the script address.
+ */
+export async function initCounter(params: InitCounterParams): Promise<InitCounterResult> {
   const srv = await txSrv();
   const validatorHex = getValidatorHex('pharma_trace.pharma_trace.mint');
-  const batchIdHex = toHex(params.batchId);
 
-  const datum = buildChainOfCustodyDatum(
-    params.manufacturerVkh,
-    params.manufacturerVkh,
-    batchIdHex,
-    0
-  );
+  const datum = buildMintCounterDatum(params.manufacturerVkh, 0);
+  const redeemer = buildInitCounterRedeemer();
+  const scriptParams = buildScriptParams(params.manufacturerVkh, params.seedTxHash, params.seedIdx);
 
   const build = await srv.send('BuildMintTransaction', {
     senderAddress: params.senderAddress,
     recipientAddress: params.senderAddress,
     lovelaceAmount: '2500000',
-    mintActionsJson: JSON.stringify([{ assetUnit: batchIdHex, quantity: '1' }]),
+    mintActionsJson: JSON.stringify([{ assetUnit: COUNTER_ASSET_NAME_HEX, quantity: '1' }]),
     mintingPolicyScript: validatorHex,
-    scriptParamsJson: JSON.stringify([{ bytes: params.manufacturerVkh }]),
-    changeAddress: params.senderAddress,
-    requiredSignersJson: JSON.stringify([params.manufacturerVkh]),
+    scriptParamsJson: scriptParams,
+    mintRedeemerJson: redeemer,
     inlineDatumJson: datum,
-    lockOnScript: true
+    lockOnScript: true,
+    forceInputsJson: JSON.stringify([{ txHash: params.seedTxHash, outputIndex: params.seedIdx }]),
+    changeAddress: params.senderAddress,
+    requiredSignersJson: JSON.stringify([params.manufacturerVkh])
   });
 
   return {
@@ -267,10 +427,101 @@ export async function mintBatchNft(params: MintParams): Promise<MintResult> {
     unsignedCbor: build.unsignedTxCbor,
     txBodyHash: build.txBodyHash,
     policyId: build.scriptHash,
-    assetName: batchIdHex,
-    fingerprint: build.fingerprint ?? '',
     scriptAddress: build.scriptAddress,
-    datum
+    seedTxHash: params.seedTxHash,
+    seedIdx: params.seedIdx
+  };
+}
+
+/**
+ * Mint a batch NFT — counter-pattern flow.
+ *
+ * Atomically spends the current counter UTxO with IncrementCounter (Constr 2)
+ * and mints the next batch NFT with MintBatch (Constr 1). The new counter
+ * UTxO (with incremented n) is the primary output at the script address; the
+ * batch NFT is an extra output also at the script address, carrying a
+ * ChainOfCustody inline datum.
+ *
+ * On-chain asset name is `intToBytes(currentN + 1)` — enforced by the
+ * validator. The caller's batchId string is a human-facing batch number
+ * stored only in the TRACE DB for display/audit.
+ */
+export async function mintBatchNft(params: MintParams): Promise<MintResult> {
+  const srv = await txSrv();
+  const validatorHex = getValidatorHex('pharma_trace.pharma_trace.spend');
+
+  const nextN = params.counter.currentN + 1;
+  const batchNameHex = intToBytes(nextN);
+
+  const scriptParams = buildScriptParams(
+    params.manufacturerVkh,
+    params.counter.seedTxHash,
+    params.counter.seedIdx
+  );
+
+  const newCounterDatum = buildMintCounterDatum(params.manufacturerVkh, nextN);
+  const batchDatum = buildChainOfCustodyDatum(
+    params.manufacturerVkh,
+    params.manufacturerVkh,
+    batchNameHex,
+    0
+  );
+
+  // __INPUT_IDX:<txHash>#<idx>__ is resolved by ODATANO v1.2.0 to the final
+  // lexicographic input position after coin selection.
+  const counterInputPlaceholder =
+    `__INPUT_IDX:${params.counter.counterTxHash}#${params.counter.counterIdx}__`;
+
+  const spendRedeemer = JSON.stringify({
+    constructor: 2,
+    fields: [{ int: counterInputPlaceholder }]
+  });
+  const mintRedeemer = JSON.stringify({
+    constructor: 1,
+    fields: [{ int: counterInputPlaceholder }]
+  });
+
+  const build = await srv.send('BuildPlutusSpendTransaction', {
+    senderAddress: params.senderAddress,
+    recipientAddress: params.senderAddress,
+    lovelaceAmount: '2500000', // new counter UTxO
+    validatorScript: validatorHex,
+    scriptParamsJson: scriptParams,
+    scriptTxHash: params.counter.counterTxHash,
+    scriptOutputIndex: params.counter.counterIdx,
+    redeemerJson: spendRedeemer,
+    inlineDatumJson: newCounterDatum,
+    lockOnScript: true,
+
+    // Combined mint (v1.2.0). Pass full assetUnit (policyId+assetName) —
+    // ODATANO's assetName-only expansion (BUG 7 fix) only runs in BuildMintTransaction,
+    // not in BuildPlutusSpendTransaction's combined spend+mint path.
+    mintActionsJson: JSON.stringify([{ assetUnit: params.counter.policyId + batchNameHex, quantity: '1' }]),
+    mintingPolicyScript: validatorHex,
+    mintRedeemerJson: mintRedeemer,
+
+    // Batch NFT at script address with ChainOfCustody inline datum
+    extraOutputsJson: JSON.stringify([{
+      address: params.counter.scriptAddress,
+      lovelaceAmount: '2000000',
+      assets: [{ unit: params.counter.policyId + batchNameHex, quantity: '1' }],
+      inlineDatumJson: batchDatum
+    }]),
+
+    changeAddress: params.senderAddress,
+    requiredSignersJson: JSON.stringify([params.manufacturerVkh])
+  });
+
+  return {
+    buildId: build.id,
+    unsignedCbor: build.unsignedTxCbor,
+    txBodyHash: build.txBodyHash,
+    policyId: params.counter.policyId,
+    assetName: batchNameHex,
+    batchNumberOnChain: nextN,
+    fingerprint: build.fingerprint ?? '',
+    scriptAddress: params.counter.scriptAddress,
+    datum: batchDatum
   };
 }
 
@@ -349,7 +600,7 @@ export async function transferBatch(params: TransferParams): Promise<TransferRes
   const srv = await txSrv();
   const validatorHex = getValidatorHex('pharma_trace.pharma_trace.spend');
 
-  const redeemer = buildTransferRedeemer(params.nextHolderVkh);
+  const redeemer = buildTransferRedeemer(params.scriptTxHash, params.scriptOutputIndex);
 
   // Output datum: updated state for the continuing output
   const outputDatum = buildChainOfCustodyDatum(
@@ -367,7 +618,7 @@ export async function transferBatch(params: TransferParams): Promise<TransferRes
     recipientAddress: params.senderAddress,
     lovelaceAmount: '2500000',
     validatorScript: validatorHex,
-    scriptParamsJson: JSON.stringify([{ bytes: params.manufacturerVkh }]),
+    scriptParamsJson: buildScriptParams(params.manufacturerVkh, params.seedTxHash, params.seedIdx),
     scriptTxHash: params.scriptTxHash,
     scriptOutputIndex: params.scriptOutputIndex,
     redeemerJson: redeemer,
@@ -403,7 +654,7 @@ export async function deliverBatch(params: DeliverParams): Promise<TransferResul
     recipientAddress: params.senderAddress,
     lovelaceAmount: '2500000',
     validatorScript: validatorHex,
-    scriptParamsJson: JSON.stringify([{ bytes: params.manufacturerVkh }]),
+    scriptParamsJson: buildScriptParams(params.manufacturerVkh, params.seedTxHash, params.seedIdx),
     scriptTxHash: params.scriptTxHash,
     scriptOutputIndex: params.scriptOutputIndex,
     redeemerJson: redeemer,

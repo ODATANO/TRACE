@@ -1,5 +1,12 @@
 # Pebble: `int as bytes` produces `4 * n` bytes
 
+> **STATUS — fixed upstream in `@harmoniclabs/pebble` 0.1.8.**
+> `hoisted_intToBytesBE` now compiles to `integerToByteString(true, 0, n)` (size = 0 → minimal big-endian), matching Aiken's `int_to_bytes`. The buggy `hoisted_sizeofPositiveInt` path is commented out at `dist/IR/toUPLC/subRoutines/replaceNatives/nativeToIR.js:227-244`.
+>
+> Empirically verified via `contracts-pebble/scripts/probe-int-to-bytes.mjs`: 0→0, 1→1, 2→1, 127→1, 256→2, 258→2 bytes. The legacy 4×n outputs (1→4, 2→8, 127→508) no longer occur.
+>
+> The historical analysis below is preserved for context.
+
 **Package**: `@harmoniclabs/pebble` 0.1.6
 **Pattern**: `len(n as bytes) == 4 * max(n, 1)` — output length scales with the integer's value, not its bit-width.
 

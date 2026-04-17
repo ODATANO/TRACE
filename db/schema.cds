@@ -66,6 +66,25 @@ entity ProofEvents {
   createdAt        : Timestamp @cds.on.insert: $now;
 }
 
+entity ManufacturerCounters {
+  key ID            : UUID;
+  manufacturerVkh   : String(56);
+  policyId          : String(56);
+  scriptAddress     : String(120);
+  seedTxHash        : String(64);
+  seedIdx           : Integer;
+  currentN          : Integer default 0;
+  counterTxHash     : String(64);
+  counterIdx        : Integer;
+  status            : String enum { PENDING; SUBMITTED; CONFIRMED; FAILED } default 'PENDING';
+  buildId           : String(36);
+  signingRequestId  : String(36);
+  submissionId      : String(36);
+  errorMessage      : String(500);
+  createdAt         : Timestamp @cds.on.insert: $now;
+  modifiedAt        : Timestamp @cds.on.insert: $now @cds.on.update: $now;
+}
+
 entity DocumentAnchors {
   key ID           : UUID;
   batch            : Association to Batches;

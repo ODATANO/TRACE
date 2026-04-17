@@ -8,7 +8,62 @@ const POLL_INTERVAL_MS = (cds.env.requires as any)?.['trace-service']?.pollInter
 export default class TraceService extends cds.ApplicationService {
 
   init() {
-    const { Batches, Participants, OnChainAssets, ProofEvents, DocumentAnchors } = this.entities;
+    const { Batches, Participants, OnChainAssets, ProofEvents, DocumentAnchors, ManufacturerCounters } = this.entities;
+
+    // -----------------------------------------------------------------------
+    // InitManufacturerCounter — one-shot bootstrap of the counter NFT
+    // -----------------------------------------------------------------------
+    this.on('InitManufacturerCounter', async (req) => {
+      const { walletAddress, walletVkh } =
+        req.data as { walletAddress: string; walletVkh: string };
+
+      if (!walletAddress || !walletVkh) {
+        return req.reject(400, `Wallet address and VKH are required (connect wallet first)`);
+      }
+
+      const existing = await SELECT.one.from(ManufacturerCounters)
+        .where({ manufacturerVkh: walletVkh, status: { in: ['SUBMITTED', 'CONFIRMED'] } });
+      if (existing) {
+        return req.reject(409, `Counter already initialised for this manufacturer (status=${existing.status}, policyId=${existing.policyId})`);
+      }
+
+      const seed = await chainAdapter.pickSeedUtxo(walletAddress);
+
+      const result = await chainAdapter.initCounter({
+        senderAddress: walletAddress,
+        manufacturerVkh: walletVkh,
+        seedTxHash: seed.txHash,
+        seedIdx: seed.outputIndex
+      });
+
+      const signingReq = await chainAdapter.createSigningRequest(result.buildId);
+
+      const counterId = cds.utils.uuid();
+      await INSERT.into(ManufacturerCounters).entries({
+        ID: counterId,
+        manufacturerVkh: walletVkh,
+        policyId: result.policyId,
+        scriptAddress: result.scriptAddress,
+        seedTxHash: result.seedTxHash,
+        seedIdx: result.seedIdx,
+        currentN: 0,
+        status: 'PENDING',
+        buildId: result.buildId,
+        signingRequestId: signingReq.signingRequestId
+      });
+
+      return {
+        counterId,
+        policyId: result.policyId,
+        scriptAddress: result.scriptAddress,
+        seedTxHash: result.seedTxHash,
+        seedIdx: result.seedIdx,
+        unsignedCbor: signingReq.unsignedTxCbor,
+        buildId: result.buildId,
+        signingRequestId: signingReq.signingRequestId,
+        txBodyHash: signingReq.txBodyHash
+      };
+    });
 
     // -----------------------------------------------------------------------
     // MintBatchNft — manufacturer mints a batch NFT on Cardano
@@ -22,6 +77,16 @@ export default class TraceService extends cds.ApplicationService {
       const batch = await SELECT.one.from(Batches).where({ ID: batchId });
 
       if (!batch) return req.reject(404, `Batch ${batchId} not found`);
+
+      // Counter must be initialised and confirmed on-chain before any batch mint.
+      const counter = await SELECT.one.from(ManufacturerCounters)
+        .where({ manufacturerVkh: walletVkh, status: 'CONFIRMED' });
+      if (!counter) {
+        return req.reject(409, `Counter not initialised for this manufacturer. Call InitManufacturerCounter first.`);
+      }
+      if (!counter.counterTxHash || counter.counterIdx == null) {
+        return req.reject(409, `Counter state not yet advanced (awaiting confirmation indexing). Try again in a moment.`);
+      }
 
       // Allow retry: only block if asset is confirmed on-chain (has UTxO ref)
       const existingAsset = await SELECT.one.from(OnChainAssets).where({ batch_ID: batchId });
@@ -52,7 +117,16 @@ export default class TraceService extends cds.ApplicationService {
         senderAddress: walletAddress,
         manufacturerVkh: walletVkh,
         batchId: batch.batchNumber,
-        originDigest: digest
+        originDigest: digest,
+        counter: {
+          policyId: counter.policyId,
+          scriptAddress: counter.scriptAddress,
+          seedTxHash: counter.seedTxHash,
+          seedIdx: counter.seedIdx,
+          currentN: counter.currentN,
+          counterTxHash: counter.counterTxHash,
+          counterIdx: counter.counterIdx
+        }
       });
 
       // Create signing request for CIP-30 wallet flow
@@ -140,15 +214,23 @@ export default class TraceService extends cds.ApplicationService {
       const [scriptTxHash, indexStr] = asset.currentUtxoRef.split('#');
       const scriptOutputIndex = parseInt(indexStr, 10);
 
+      const mfrCounter = await SELECT.one.from(ManufacturerCounters)
+        .where({ manufacturerVkh: asset.manufacturerVkh, status: 'CONFIRMED' });
+      if (!mfrCounter?.seedTxHash) {
+        return req.reject(409, `Manufacturer counter seed not found — cannot rebuild script params`);
+      }
+
       const result = await chainAdapter.transferBatch({
         senderAddress: walletAddress,
         manufacturerVkh: asset.manufacturerVkh,
         currentHolderVkh: walletVkh,
         nextHolderVkh: targetParticipant.vkh,
-        batchIdHex: chainAdapter.toHex(batch.batchNumber),
+        batchIdHex: asset.assetName,
         currentStep: asset.step,
         scriptTxHash,
-        scriptOutputIndex
+        scriptOutputIndex,
+        seedTxHash: mfrCounter.seedTxHash,
+        seedIdx: mfrCounter.seedIdx
       });
 
       // Create signing request for CIP-30 wallet flow
@@ -230,6 +312,18 @@ export default class TraceService extends cds.ApplicationService {
         }
       }
 
+      // Also update any pending ManufacturerCounter init linked to this signingRequestId
+      const pendingCounter = await SELECT.one.from(ManufacturerCounters)
+        .where({ signingRequestId, status: 'PENDING' });
+      if (pendingCounter) {
+        await UPDATE(ManufacturerCounters)
+          .set({
+            status: 'SUBMITTED',
+            submissionId: result.submissionId
+          })
+          .where({ ID: pendingCounter.ID });
+      }
+
       // Also update any DocumentAnchor linked to this signingRequestId
       const pendingAnchor = await SELECT.one.from(DocumentAnchors)
         .where({ signingRequestId, status: 'PENDING' });
@@ -280,16 +374,23 @@ export default class TraceService extends cds.ApplicationService {
         const now = new Date().toISOString();
 
         if (check.status === 'confirmed') {
-          await UPDATE(ProofEvents)
-            .set({
-              status: 'CONFIRMED',
-              onChainTxHash: check.txHash ?? evt.onChainTxHash,
-              lastCheckedAt: now
-            })
-            .where({ ID: evt.ID });
-
-          await this._onConfirmed(evt, check.txHash ?? evt.onChainTxHash);
-          confirmed++;
+          const txHash = check.txHash ?? evt.onChainTxHash;
+          try {
+            // Side-effect first: if it throws (e.g. indexer lag preventing
+            // batch-NFT lookup), leave the event SUBMITTED for retry.
+            await this._onConfirmed(evt, txHash);
+            await UPDATE(ProofEvents)
+              .set({
+                status: 'CONFIRMED',
+                onChainTxHash: txHash,
+                lastCheckedAt: now
+              })
+              .where({ ID: evt.ID });
+            confirmed++;
+          } catch (sideErr: any) {
+            LOG.warn(`SubmitSigned poll: confirmation deferred for evt ${evt.ID}: ${sideErr.message}`);
+            await UPDATE(ProofEvents).set({ lastCheckedAt: now }).where({ ID: evt.ID });
+          }
 
         } else if (check.status === 'failed') {
           await UPDATE(ProofEvents)
@@ -338,7 +439,38 @@ export default class TraceService extends cds.ApplicationService {
         }
       }
 
-      const totalChecked = submitted.length + submittedRegistrations.length;
+      // Also check SUBMITTED manufacturer-counter inits
+      const submittedCounters = await SELECT.from(ManufacturerCounters)
+        .where({ status: 'SUBMITTED' });
+
+      for (const ctr of submittedCounters) {
+        if (!ctr.submissionId) continue;
+        const check = await chainAdapter.checkSubmissionStatus(ctr.submissionId);
+        const now = new Date().toISOString();
+
+        if (check.status === 'confirmed') {
+          const counterTxHash = check.txHash ?? null;
+          let counterIdx: number | null = null;
+          if (counterTxHash) {
+            counterIdx = await chainAdapter.getAssetOutputIndex(counterTxHash, ctr.policyId, '');
+          }
+          await UPDATE(ManufacturerCounters)
+            .set({
+              status: 'CONFIRMED',
+              counterTxHash,
+              counterIdx: counterIdx ?? 0
+            })
+            .where({ ID: ctr.ID });
+          confirmed++;
+        } else if (check.status === 'failed') {
+          await UPDATE(ManufacturerCounters)
+            .set({ status: 'FAILED', errorMessage: check.errorMessage, modifiedAt: now })
+            .where({ ID: ctr.ID });
+          failed++;
+        }
+      }
+
+      const totalChecked = submitted.length + submittedRegistrations.length + submittedCounters.length;
       LOG.info(`Checked ${totalChecked} submissions: ${confirmed} confirmed, ${failed} failed`);
       return { checked: totalChecked, confirmed, failed };
     });
@@ -360,11 +492,26 @@ export default class TraceService extends cds.ApplicationService {
       if (!batch) return req.reject(404, `Associated batch not found`);
 
       if (evt.eventType === 'MINT') {
+        const counter = await SELECT.one.from(ManufacturerCounters)
+          .where({ manufacturerVkh: walletVkh, status: 'CONFIRMED' });
+        if (!counter || !counter.counterTxHash || counter.counterIdx == null) {
+          return req.reject(409, `Counter not initialised / not yet advanced for this manufacturer`);
+        }
+
         const result = await chainAdapter.mintBatchNft({
           senderAddress: walletAddress,
           manufacturerVkh: walletVkh,
           batchId: batch.batchNumber,
-          originDigest: evt.payloadDigest || ''
+          originDigest: evt.payloadDigest || '',
+          counter: {
+            policyId: counter.policyId,
+            scriptAddress: counter.scriptAddress,
+            seedTxHash: counter.seedTxHash,
+            seedIdx: counter.seedIdx,
+            currentN: counter.currentN,
+            counterTxHash: counter.counterTxHash,
+            counterIdx: counter.counterIdx
+          }
         });
 
         const signingReq = await chainAdapter.createSigningRequest(result.buildId);
@@ -387,15 +534,23 @@ export default class TraceService extends cds.ApplicationService {
 
         const [scriptTxHash, indexStr] = asset.currentUtxoRef.split('#');
 
+        const mfrCounter = await SELECT.one.from(ManufacturerCounters)
+          .where({ manufacturerVkh: asset.manufacturerVkh, status: 'CONFIRMED' });
+        if (!mfrCounter?.seedTxHash) {
+          return req.reject(409, `Manufacturer counter seed not found — cannot rebuild script params`);
+        }
+
         const result = await chainAdapter.transferBatch({
           senderAddress: walletAddress,
           manufacturerVkh: asset.manufacturerVkh,
           currentHolderVkh: walletVkh,
           nextHolderVkh: target.vkh,
-          batchIdHex: chainAdapter.toHex(batch.batchNumber),
+          batchIdHex: asset.assetName,
           currentStep: asset.step,
           scriptTxHash,
-          scriptOutputIndex: parseInt(indexStr, 10)
+          scriptOutputIndex: parseInt(indexStr, 10),
+          seedTxHash: mfrCounter.seedTxHash,
+          seedIdx: mfrCounter.seedIdx
         });
 
         const signingReq = await chainAdapter.createSigningRequest(result.buildId);
@@ -414,14 +569,22 @@ export default class TraceService extends cds.ApplicationService {
 
         const [scriptTxHash, indexStr] = asset.currentUtxoRef.split('#');
 
+        const mfrCounter = await SELECT.one.from(ManufacturerCounters)
+          .where({ manufacturerVkh: asset.manufacturerVkh, status: 'CONFIRMED' });
+        if (!mfrCounter?.seedTxHash) {
+          return req.reject(409, `Manufacturer counter seed not found — cannot rebuild script params`);
+        }
+
         const result = await chainAdapter.deliverBatch({
           senderAddress: walletAddress,
           manufacturerVkh: asset.manufacturerVkh,
           currentHolderVkh: walletVkh,
-          batchIdHex: chainAdapter.toHex(batch.batchNumber),
+          batchIdHex: asset.assetName,
           currentStep: asset.step,
           scriptTxHash,
-          scriptOutputIndex: parseInt(indexStr, 10)
+          scriptOutputIndex: parseInt(indexStr, 10),
+          seedTxHash: mfrCounter.seedTxHash,
+          seedIdx: mfrCounter.seedIdx
         });
 
         const signingReq = await chainAdapter.createSigningRequest(result.buildId);
@@ -579,14 +742,22 @@ export default class TraceService extends cds.ApplicationService {
       const [scriptTxHash, indexStr] = asset.currentUtxoRef.split('#');
       const scriptOutputIndex = parseInt(indexStr, 10);
 
+      const mfrCounter = await SELECT.one.from(ManufacturerCounters)
+        .where({ manufacturerVkh: asset.manufacturerVkh, status: 'CONFIRMED' });
+      if (!mfrCounter?.seedTxHash) {
+        return req.reject(409, `Manufacturer counter seed not found — cannot rebuild script params`);
+      }
+
       const result = await chainAdapter.deliverBatch({
         senderAddress: walletAddress,
         manufacturerVkh: asset.manufacturerVkh,
         currentHolderVkh: walletVkh,
-        batchIdHex: chainAdapter.toHex(batch.batchNumber),
+        batchIdHex: asset.assetName,
         currentStep: asset.step,
         scriptTxHash,
-        scriptOutputIndex
+        scriptOutputIndex,
+        seedTxHash: mfrCounter.seedTxHash,
+        seedIdx: mfrCounter.seedIdx
       });
 
       // Create signing request for CIP-30 wallet flow
@@ -963,17 +1134,46 @@ export default class TraceService extends cds.ApplicationService {
     evt: any, txHash: string,
     run: (q: any) => Promise<any> = (q) => q
   ) {
-    const { Batches, Participants, OnChainAssets, DocumentAnchors } = cds.entities('trace');
+    const { Batches, Participants, OnChainAssets, DocumentAnchors, ManufacturerCounters } = cds.entities('trace');
 
     if (evt.eventType === 'MINT') {
       const asset = await run(SELECT.one.from(OnChainAssets).where({ batch_ID: evt.batch_ID }));
       if (asset) {
-        const outputIdx = asset.scriptAddress
-          ? await chainAdapter.getScriptOutputIndex(txHash, asset.scriptAddress)
-          : 0;
+        // Batch NFT output index: MUST be looked up by assetUnit. Output 0 is
+        // always the counter (per validator spec, pharma_trace.ak:111), so any
+        // address-based fallback would silently corrupt currentUtxoRef.
+        let outputIdx: number | null = null;
+        if (asset.policyId && asset.assetName) {
+          outputIdx = await chainAdapter.getAssetOutputIndex(txHash, asset.policyId, asset.assetName);
+        }
+        if (outputIdx == null) {
+          throw new Error(
+            `MINT side-effect: batch NFT ${asset.policyId}.${asset.assetName} not found in tx ${txHash} outputs (likely indexer lag) — retry on next poll`
+          );
+        }
         await run(UPDATE(OnChainAssets)
           .set({ currentUtxoRef: txHash + '#' + outputIdx })
           .where({ ID: asset.ID }));
+
+        // Batch mint also advances the manufacturer counter: new counter UTxO
+        // is the primary output (index 0) at the script address. Query it
+        // explicitly via empty-name asset to stay robust to reordering.
+        if (asset.manufacturerVkh && asset.policyId) {
+          const counterIdx = await chainAdapter.getAssetOutputIndex(txHash, asset.policyId, '');
+          if (counterIdx != null) {
+            const counter = await run(SELECT.one.from(ManufacturerCounters)
+              .where({ manufacturerVkh: asset.manufacturerVkh, status: 'CONFIRMED' }));
+            if (counter) {
+              await run(UPDATE(ManufacturerCounters)
+                .set({
+                  currentN: (counter.currentN ?? 0) + 1,
+                  counterTxHash: txHash,
+                  counterIdx
+                })
+                .where({ ID: counter.ID }));
+            }
+          }
+        }
       }
       const updateSet: any = { status: 'MINTED' };
       if (evt.signerVkh) {
@@ -991,9 +1191,18 @@ export default class TraceService extends cds.ApplicationService {
     if (evt.eventType === 'TRANSFER') {
       const asset = await run(SELECT.one.from(OnChainAssets).where({ batch_ID: evt.batch_ID }));
       if (asset) {
-        const outputIdx = asset.scriptAddress
-          ? await chainAdapter.getScriptOutputIndex(txHash, asset.scriptAddress)
-          : 0;
+        // Locate the continuing batch-NFT output by assetUnit (script-address
+        // lookup is unsafe — could collide with other script outputs in future
+        // multi-output txs).
+        let outputIdx: number | null = null;
+        if (asset.policyId && asset.assetName) {
+          outputIdx = await chainAdapter.getAssetOutputIndex(txHash, asset.policyId, asset.assetName);
+        }
+        if (outputIdx == null) {
+          throw new Error(
+            `TRANSFER side-effect: batch NFT ${asset.policyId}.${asset.assetName} not found in tx ${txHash} outputs (likely indexer lag) — retry on next poll`
+          );
+        }
         // Use targetParticipantId (stored during TransferBatch) for the new holder
         let newHolderVkh = evt.signerVkh;
         if (evt.targetParticipantId) {
@@ -1069,11 +1278,19 @@ export default class TraceService extends cds.ApplicationService {
 
             if (check.status === 'confirmed') {
               const txHash = check.txHash ?? evt.onChainTxHash;
-              await run(UPDATE(ProofEvents)
-                .set({ status: 'CONFIRMED', onChainTxHash: txHash, lastCheckedAt: now })
-                .where({ ID: evt.ID }));
-              await this._applyConfirmationSideEffects(evt, txHash, run);
-              confirmed++;
+              try {
+                // Run side-effects first so CONFIRMED is only set when DB
+                // state is consistent; throws (e.g. indexer lag) leave the
+                // event SUBMITTED for the next poll to retry.
+                await this._applyConfirmationSideEffects(evt, txHash, run);
+                await run(UPDATE(ProofEvents)
+                  .set({ status: 'CONFIRMED', onChainTxHash: txHash, lastCheckedAt: now })
+                  .where({ ID: evt.ID }));
+                confirmed++;
+              } catch (sideErr: any) {
+                LOG.warn(`Confirmation deferred for evt ${evt.ID}: ${sideErr.message}`);
+                await run(UPDATE(ProofEvents).set({ lastCheckedAt: now }).where({ ID: evt.ID }));
+              }
               continue;
             }
 
@@ -1084,11 +1301,16 @@ export default class TraceService extends cds.ApplicationService {
           if (evt.onChainTxHash) {
             const onChain = await chainAdapter.isTxConfirmedOnChain(evt.onChainTxHash);
             if (onChain) {
-              await run(UPDATE(ProofEvents)
-                .set({ status: 'CONFIRMED', lastCheckedAt: now })
-                .where({ ID: evt.ID }));
-              await this._applyConfirmationSideEffects(evt, evt.onChainTxHash, run);
-              confirmed++;
+              try {
+                await this._applyConfirmationSideEffects(evt, evt.onChainTxHash, run);
+                await run(UPDATE(ProofEvents)
+                  .set({ status: 'CONFIRMED', lastCheckedAt: now })
+                  .where({ ID: evt.ID }));
+                confirmed++;
+              } catch (sideErr: any) {
+                LOG.warn(`Confirmation deferred for evt ${evt.ID}: ${sideErr.message}`);
+                await run(UPDATE(ProofEvents).set({ lastCheckedAt: now }).where({ ID: evt.ID }));
+              }
               continue;
             }
           }
@@ -1133,7 +1355,36 @@ export default class TraceService extends cds.ApplicationService {
           }
         }
 
-        LOG.info(`Polled ${submitted.length + submittedRegs.length} submissions: ${confirmed} confirmed, ${failed} failed`);
+        // Poll SUBMITTED manufacturer-counter inits
+        const { ManufacturerCounters: PollingCounters } = cds.entities('trace');
+        const submittedCounters = await run(
+          SELECT.from(PollingCounters).where({ status: 'SUBMITTED' })
+        );
+        for (const ctr of submittedCounters) {
+          if (!ctr.submissionId) continue;
+          const check = await chainAdapter.checkSubmissionStatus(ctr.submissionId);
+          if (check.status === 'confirmed') {
+            const counterTxHash = check.txHash ?? null;
+            let counterIdx: number | null = null;
+            if (counterTxHash) {
+              counterIdx = await chainAdapter.getAssetOutputIndex(counterTxHash, ctr.policyId, '');
+            }
+            await run(UPDATE(PollingCounters).set({
+              status: 'CONFIRMED',
+              counterTxHash,
+              counterIdx: counterIdx ?? 0
+            }).where({ ID: ctr.ID }));
+            confirmed++;
+          } else if (check.status === 'failed') {
+            await run(UPDATE(PollingCounters).set({
+              status: 'FAILED',
+              errorMessage: check.errorMessage
+            }).where({ ID: ctr.ID }));
+            failed++;
+          }
+        }
+
+        LOG.info(`Polled ${submitted.length + submittedRegs.length + submittedCounters.length} submissions: ${confirmed} confirmed, ${failed} failed`);
       } catch (err: any) {
         LOG.warn('Polling error:', err.message);
       }

@@ -5,6 +5,7 @@
 
   <Page title="Batches" id="batchListPage">
     <headerContent>
+      <Button text="Init Counter" icon="sap-icon://begin" press="onInitCounter" tooltip="One-shot bootstrap of the on-chain manufacturer counter NFT. Run once per wallet before minting any batches."/>
       <Button text="Create Batch" icon="sap-icon://add" type="Emphasized" press="onCreateBatch"/>
       <Button icon="sap-icon://refresh" press="onRefresh" tooltip="Refresh"/>
     </headerContent>

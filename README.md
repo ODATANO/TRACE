@@ -15,7 +15,7 @@ TRACE is Example SAP FIORI Application for a pharmaceutical supply chain trackin
 |-------|-----------|
 | **Smart Contracts** | Aiken (Plutus V3) |
 | **Blockchain** | Cardano preview testnet |
-| **Chain Gateway** | @odatano/core v1.1.0 (CAP plugin) |
+| **Chain Gateway** | @odatano/core v1.2.0 (CAP plugin) |
 | **Backend** | SAP CAP v9, Node.js, TypeScript |
 | **Database** | SQLite (dev), SAP HANA (prod) |
 | **Frontend** | Freestyle SAPUI5 (OpenUI5 CDN, sap_horizon theme) |

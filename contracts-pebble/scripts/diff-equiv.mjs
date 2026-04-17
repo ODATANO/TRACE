@@ -189,16 +189,15 @@ const PARAMS = [
     txOutRef(SEED_TX_HASH, SEED_OUT_IDX),
 ];
 
-// Redeemer mappers: Aiken and Pebble enumerate mint endpoints in different orders.
-//   Aiken:  MintAction = InitCounter(0) | MintBatch{i}(1) | Burn(2)
-//   Pebble: mintBatch(0), initCounter(1), burn(2)
-// Spend endpoints happen to match: Transfer(0), Deliver(1), IncrementCounter(2).
+// Redeemer mappers: canonical ABI (both backends aligned).
+//   Mint:  InitCounter=0 | MintBatch{i}=1 | Burn=2
+//   Spend: Transfer(i,o)=0 | Deliver=1 | IncrementCounter(i)=2
 const aikenInitCounter = new DataConstr(0n, []);
-const pebbleInitCounter = new DataConstr(1n, []);
+const pebbleInitCounter = new DataConstr(0n, []);
 const aikenBurn = new DataConstr(2n, []);
 const pebbleBurn = new DataConstr(2n, []);
 const aikenMintBatch = (i) => new DataConstr(1n, [new DataI(BigInt(i))]);
-const pebbleMintBatch = (i) => new DataConstr(0n, [new DataI(BigInt(i))]);
+const pebbleMintBatch = (i) => new DataConstr(1n, [new DataI(BigInt(i))]);
 
 const transfer = (i, o) => new DataConstr(0n, [new DataI(BigInt(i)), new DataI(BigInt(o))]);
 const deliver = new DataConstr(1n, []);
@@ -219,14 +218,14 @@ function walletInput(ref) {
 }
 // Counter UTxO
 function counterInput(ref, n) {
-    const datum = inlineDatum(new DataConstr(1n, [new DataI(BigInt(n))]));
+    const datum = inlineDatum(new DataConstr(1n, [new DataB(MFR_VKH), new DataI(BigInt(n))]));
     return txIn(ref,
         txOut(scriptAddress(POLICY), value(2_000_000, [[POLICY, COUNTER_NAME, 1]]), datum)
     );
 }
 // Counter output
 function counterOutput(n) {
-    const datum = inlineDatum(new DataConstr(1n, [new DataI(BigInt(n))]));
+    const datum = inlineDatum(new DataConstr(1n, [new DataB(MFR_VKH), new DataI(BigInt(n))]));
     return txOut(scriptAddress(POLICY), value(2_000_000, [[POLICY, COUNTER_NAME, 1]]), datum);
 }
 // Batch output
@@ -454,7 +453,7 @@ test("transfer rejects when step not incremented", "REJECT",
 test("incrementCounter accepts single new batch", "ACCEPT",
     () => {
         const ref = txOutRef(COUNTER_TX, 0);
-        const datum = new DataConstr(1n, [new DataI(0n)]); // MintCounter{0}
+        const datum = new DataConstr(1n, [new DataB(MFR_VKH), new DataI(0n)]); // MintCounter{mfr, 0}
         const name = Buffer.from([1]);  // 1 as bytes (minimal BE)
         return spendingCtx(incrementCounter(0), datum, txInfo({
             inputs: [counterInput(ref, 0)],
@@ -465,7 +464,7 @@ test("incrementCounter accepts single new batch", "ACCEPT",
     },
     () => {
         const ref = txOutRef(COUNTER_TX, 0);
-        const datum = new DataConstr(1n, [new DataI(0n)]);
+        const datum = new DataConstr(1n, [new DataB(MFR_VKH), new DataI(0n)]);
         const name = Buffer.from([1]);
         return spendingCtx(incrementCounter(0), datum, txInfo({
             inputs: [counterInput(ref, 0)],
@@ -481,7 +480,7 @@ test("incrementCounter accepts single new batch", "ACCEPT",
 test("incrementCounter rejects without manufacturer signature", "REJECT",
     () => {
         const ref = txOutRef(COUNTER_TX, 0);
-        const datum = new DataConstr(1n, [new DataI(0n)]);
+        const datum = new DataConstr(1n, [new DataB(MFR_VKH), new DataI(0n)]);
         const name = Buffer.from([1]);
         return spendingCtx(incrementCounter(0), datum, txInfo({
             inputs: [counterInput(ref, 0)],
@@ -492,13 +491,94 @@ test("incrementCounter rejects without manufacturer signature", "REJECT",
     },
     () => {
         const ref = txOutRef(COUNTER_TX, 0);
-        const datum = new DataConstr(1n, [new DataI(0n)]);
+        const datum = new DataConstr(1n, [new DataB(MFR_VKH), new DataI(0n)]);
         const name = Buffer.from([1]);
         return spendingCtx(incrementCounter(0), datum, txInfo({
             inputs: [counterInput(ref, 0)],
             outputs: [counterOutput(1), batchOutput(name)],
             mint: value(null, [[POLICY, name, 1]]),
             signatories: [],
+        }), ref);
+    }
+);
+
+// SPEND :: incrementCounter — accept (multiple batches, k=3)
+// Crucial regression coverage for Pebble Bug C (let-mutation propagation).
+test("incrementCounter accepts 3 new batches", "ACCEPT",
+    () => {
+        const ref = txOutRef(COUNTER_TX, 0);
+        const datum = new DataConstr(1n, [new DataB(MFR_VKH), new DataI(0n)]);
+        const n1 = Buffer.from([1]);
+        const n2 = Buffer.from([2]);
+        const n3 = Buffer.from([3]);
+        return spendingCtx(incrementCounter(0), datum, txInfo({
+            inputs: [counterInput(ref, 0)],
+            outputs: [
+                counterOutput(3),
+                batchOutput(n1),
+                batchOutput(n2),
+                batchOutput(n3),
+            ],
+            mint: value(null, [[POLICY, n1, 1], [POLICY, n2, 1], [POLICY, n3, 1]]),
+            signatories: [MFR_VKH],
+        }), ref);
+    },
+    () => {
+        const ref = txOutRef(COUNTER_TX, 0);
+        const datum = new DataConstr(1n, [new DataB(MFR_VKH), new DataI(0n)]);
+        const n1 = Buffer.from([1]);
+        const n2 = Buffer.from([2]);
+        const n3 = Buffer.from([3]);
+        return spendingCtx(incrementCounter(0), datum, txInfo({
+            inputs: [counterInput(ref, 0)],
+            outputs: [
+                counterOutput(3),
+                batchOutput(n1),
+                batchOutput(n2),
+                batchOutput(n3),
+            ],
+            mint: value(null, [[POLICY, n1, 1], [POLICY, n2, 1], [POLICY, n3, 1]]),
+            signatories: [MFR_VKH],
+        }), ref);
+    }
+);
+
+// SPEND :: incrementCounter — reject (3 batches, counter skips to 5 not 3)
+test("incrementCounter rejects wrong final counter (3 batches)", "REJECT",
+    () => {
+        const ref = txOutRef(COUNTER_TX, 0);
+        const datum = new DataConstr(1n, [new DataB(MFR_VKH), new DataI(0n)]);
+        const n1 = Buffer.from([1]);
+        const n2 = Buffer.from([2]);
+        const n3 = Buffer.from([3]);
+        return spendingCtx(incrementCounter(0), datum, txInfo({
+            inputs: [counterInput(ref, 0)],
+            outputs: [
+                counterOutput(5), // wrong — should be 3
+                batchOutput(n1),
+                batchOutput(n2),
+                batchOutput(n3),
+            ],
+            mint: value(null, [[POLICY, n1, 1], [POLICY, n2, 1], [POLICY, n3, 1]]),
+            signatories: [MFR_VKH],
+        }), ref);
+    },
+    () => {
+        const ref = txOutRef(COUNTER_TX, 0);
+        const datum = new DataConstr(1n, [new DataB(MFR_VKH), new DataI(0n)]);
+        const n1 = Buffer.from([1]);
+        const n2 = Buffer.from([2]);
+        const n3 = Buffer.from([3]);
+        return spendingCtx(incrementCounter(0), datum, txInfo({
+            inputs: [counterInput(ref, 0)],
+            outputs: [
+                counterOutput(5),
+                batchOutput(n1),
+                batchOutput(n2),
+                batchOutput(n3),
+            ],
+            mint: value(null, [[POLICY, n1, 1], [POLICY, n2, 1], [POLICY, n3, 1]]),
+            signatories: [MFR_VKH],
         }), ref);
     }
 );

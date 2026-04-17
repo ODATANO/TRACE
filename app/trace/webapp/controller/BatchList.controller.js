@@ -193,6 +193,87 @@ sap.ui.define([
       }
     },
 
+    // ---- Counter Bootstrap ----
+
+    onInitCounter: function () {
+      if (!CardanoWallet.isConnected()) {
+        MessageBox.warning("Please connect your Cardano wallet first.");
+        return;
+      }
+
+      var sVkh = CardanoWallet.getVkh();
+      var that = this;
+
+      MessageBox.confirm(
+        "Initialise the on-chain manufacturer counter for the connected wallet?\n\n" +
+        "This is a one-shot bootstrap and consumes one UTxO as a seed. " +
+        "You only need to run it once before minting any batches.",
+        {
+          title: "Init Manufacturer Counter",
+          onClose: function (sAction) {
+            if (sAction !== MessageBox.Action.OK) { return; }
+            that._signAndSubmit("InitManufacturerCounter", {}).then(function (oRes) {
+              if (oRes && oRes.txHash) {
+                MessageBox.information(
+                  "Counter bootstrap submitted.\n\n" +
+                  "Tx: " + oRes.txHash + "\n\n" +
+                  "Wait for confirmation before minting a batch."
+                );
+              }
+            });
+          }
+        }
+      );
+    },
+
+    _signAndSubmit: function (sActionName, oPayload) {
+      if (!CardanoWallet.isConnected()) {
+        MessageBox.warning("Please connect your Cardano wallet first.");
+        return Promise.reject(new Error("Wallet not connected"));
+      }
+
+      oPayload.walletAddress = CardanoWallet.getAddress();
+      oPayload.walletVkh = CardanoWallet.getVkh();
+
+      var oModel = this.getView().getModel();
+      var oActionBinding = oModel.bindContext("/" + sActionName + "(...)");
+      Object.keys(oPayload).forEach(function (sKey) {
+        oActionBinding.setParameter(sKey, oPayload[sKey]);
+      });
+
+      MessageToast.show("Building transaction...");
+
+      return oActionBinding.execute()
+        .then(function () {
+          var oResult = oActionBinding.getBoundContext().getObject();
+          MessageToast.show("Signing with wallet...");
+          return CardanoWallet.signTx(oResult.unsignedCbor).then(function (sSignedCbor) {
+            return { signingRequestId: oResult.signingRequestId, signedCbor: sSignedCbor };
+          });
+        })
+        .then(function (oSigned) {
+          MessageToast.show("Submitting transaction...");
+          var oSubmitBinding = oModel.bindContext("/SubmitSigned(...)");
+          oSubmitBinding.setParameter("signingRequestId", oSigned.signingRequestId);
+          oSubmitBinding.setParameter("signedTxCbor", oSigned.signedCbor);
+          return oSubmitBinding.execute().then(function () {
+            return oSubmitBinding.getBoundContext().getObject();
+          });
+        })
+        .then(function (oSubmitResult) {
+          MessageToast.show("Transaction submitted! Hash: " + (oSubmitResult.txHash || "").substring(0, 16) + "...");
+          return oSubmitResult;
+        })
+        .catch(function (err) {
+          if (err.message && err.message.indexOf("User") >= 0) {
+            MessageToast.show("Signing cancelled by user");
+          } else {
+            MessageBox.error("Transaction failed: " + (err.message || err));
+          }
+          throw err;
+        });
+    },
+
     // ---- Batch Creation ----
 
     onCreateBatch: function () {
