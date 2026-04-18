@@ -37,7 +37,7 @@
           "blockfrost",
           "koios"
         ],
-        "blockfrostApiKey": "previewSVefaibXiFzTrEaoextN5icuq294xkIH",
+        "blockfrostApiKey": "your_blockfrost_api_key",
         "txBuilders": [
           "buildooor"
         ]
