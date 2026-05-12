@@ -31,9 +31,10 @@ Blockchain integration via [ODATANO](https://github.com/ODATANO/ODATANO), a CAP 
 ```bash
 git clone <repo-url> && cd TRACE
 npm install
-npm run deploy
 TX_BUILDERS=buildooor npx cds watch
 ```
+
+`cds watch` auto-deploys the SQLite schema (TRACE + ODATANO plugin) on first start.
 
 Open http://localhost:4004/trace/webapp/index.html
 

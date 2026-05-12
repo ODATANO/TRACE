@@ -14,7 +14,7 @@ In `package.json`:
       },
       "odatano-core": {
         "network": "preview",
-        "backends": ["blockfrost"],
+        "backends": ["blockfrost", "koios"],
         "blockfrostApiKey": "<your-preview-key>",
         "txBuilders": ["buildooor"]
       }
@@ -36,6 +36,9 @@ CSV files in `db/data/`:
 
 | Script | Description |
 |--------|-------------|
-| `npm run deploy` | Create/recreate SQLite DB with tables + seed data |
 | `npm start` | Start production server (`cds-serve`) |
-| `npx cds watch` | Start dev server with live reload |
+| `npx cds watch` | Start dev server with live reload (auto-deploys schema) |
+| `npx cds deploy --to sqlite` | Manually (re-)create the SQLite DB from CDS models + CSV seeds |
+
+> ODATANO's schema is registered automatically via its `cds-plugin.js`, so the prior
+> `scripts/deploy-db.js` is no longer needed.

@@ -43,6 +43,5 @@ TRACE/
 │   ├── validators/pharma_trace.ak  Aiken contract
 │   └── plutus.json                 Compiled Plutus V3
 ├── app/trace/webapp/      SAPUI5 frontend
-├── scripts/               DB deploy + protocol params
 └── package.json
 ```

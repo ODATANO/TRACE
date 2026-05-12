@@ -15,8 +15,7 @@
     "typescript": "^5.9.3"
   },
   "scripts": {
-    "start": "cds-serve",
-    "deploy": "node scripts/deploy-db.js"
+    "start": "cds-serve"
   },
   "cds": {
     "requires": {
