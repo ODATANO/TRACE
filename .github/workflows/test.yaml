@@ -29,6 +29,8 @@ jobs:
         run: |
           curl -sSfL https://install.aiken-lang.org | bash
           echo "$HOME/.aiken/bin" >> $GITHUB_PATH
+          export PATH="$HOME/.aiken/bin:$PATH"
+          aikup install v1.1.21
 
       - name: Aiken version
         run: aiken --version

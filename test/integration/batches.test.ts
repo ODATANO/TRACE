@@ -218,7 +218,7 @@ describe('Batches entity — DB-only paths', () => {
         { ID: evtId2, batch_ID: batchId, eventType: 'TRANSFER', payloadDigest: '2'.repeat(64), status: 'PENDING' },
       ]);
 
-      await UPDATE(ProofEvents).set({ status: 'SUBMITTED' }).where({ ID: evtId1 });
+      await UPDATE.entity(ProofEvents).set({ status: 'SUBMITTED' }).where({ ID: evtId1 });
 
       const updated = await SELECT.one.from(ProofEvents).where({ ID: evtId1 });
       const sibling = await SELECT.one.from(ProofEvents).where({ ID: evtId2 });

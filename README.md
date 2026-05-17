@@ -47,3 +47,4 @@ Open http://localhost:4004/trace/webapp/index.html
 - [Architecture](docs/ARCHITECTURE.md): Tech stack, data model, project structure
 - [Smart Contract & API](docs/SMART_CONTRACT.md): Aiken validator, OData actions, signing flow
 - [Configuration](docs/CONFIGURATION.md): Plugin config, seed data, scripts
+- [License](LICENSE): Apache 2.0 License details
