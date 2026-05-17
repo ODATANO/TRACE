@@ -16,7 +16,16 @@ module.exports = {
   moduleFileExtensions: ['ts', 'js', 'json'],
 
   transform: {
-    '^.+\\.(ts|tsx)$': ['ts-jest', { tsconfig: 'tsconfig.json' }],
+    // Override `module` to CommonJS for tests so `await import(...)` in source
+    // (e.g. chain-adapter's @odatano/core dynamic import) compiles to require()
+    // — otherwise Node treats it as an ESM dynamic import that needs
+    // --experimental-vm-modules.
+    '^.+\\.(ts|tsx)$': ['ts-jest', {
+      tsconfig: {
+        module: 'CommonJS',
+        moduleResolution: 'node',
+      },
+    }],
   },
 
   transformIgnorePatterns: ['/node_modules/'],
