@@ -10,10 +10,11 @@
     "rootDir": ".",
     "resolveJsonModule": true,
     "declaration": true,
-    "types": ["@cap-js/cds-types"],
+    "isolatedModules": true,
+    "types": ["@cap-js/cds-types", "jest", "node"],
     "paths": {
       "#cds-models/*": ["./@cds-models/*/index.ts"]
     }
   },
-  "include": ["srv/**/*.ts", "@cds-models/**/*.ts"]
+  "include": ["srv/**/*.ts", "@cds-models/**/*.ts", "test/**/*.ts", "types/**/*.d.ts"]
 }

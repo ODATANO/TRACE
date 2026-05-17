@@ -1,0 +1,101 @@
+name: TRACE Tests
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trace-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # =========================================================================
+  # Aiken: ensure validator sources still compile and that the committed
+  # plutus.json artifact matches what the build produces (drift guard).
+  # =========================================================================
+  aiken:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Install Aiken
+        run: |
+          curl -sSfL https://install.aiken-lang.org | bash
+          echo "$HOME/.aiken/bin" >> $GITHUB_PATH
+
+      - name: Aiken version
+        run: aiken --version
+
+      - name: aiken check
+        working-directory: contracts
+        run: aiken check
+
+      - name: aiken build
+        working-directory: contracts
+        run: aiken build
+
+      - name: Verify plutus.json is up to date with sources
+        working-directory: contracts
+        run: |
+          if ! git diff --exit-code plutus.json; then
+            echo "::error::contracts/plutus.json is out of sync with the Aiken sources."
+            echo "Run 'aiken build' in contracts/ and commit the updated plutus.json."
+            exit 1
+          fi
+
+  # =========================================================================
+  # Node: type check + unit + integration (smoke) tests with coverage.
+  # =========================================================================
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20.x, 22.x]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate CDS types
+        run: npm run cds:types
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Deploy database (SQLite)
+        run: npm run db:deploy
+
+      - name: Run tests with coverage
+        env:
+          NODE_ENV: test
+          CDS_ENV: test
+          LOG_LEVEL: error
+          SKIP_AUTO_INIT: 'true'
+          NO_TELEMETRY: 'true'
+        run: npm run test:ci:coverage
+
+      - name: Upload coverage to Codecov
+        if: always()
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage/lcov.info
+          flags: node-${{ matrix.node-version }}
+          name: node-${{ matrix.node-version }}
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false

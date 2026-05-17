@@ -1,6 +1,6 @@
 using {trace} from '../db/schema';
 
-service TraceService @(path: '/odata/v4/trace') {
+service TraceService @(path: '/odata/v4/trace', impl: './trace-service') {
 
   entity Participants         as projection on trace.Participants;
   entity Batches              as projection on trace.Batches;

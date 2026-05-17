@@ -1390,10 +1390,13 @@ export default class TraceService extends cds.ApplicationService {
       }
     };
 
-    // Start after a short delay to let the server fully boot
-    setTimeout(() => {
+    // Start after a short delay to let the server fully boot.
+    // unref() so the boot timer never keeps the process alive in tests / scripts.
+    const bootTimer = setTimeout(() => {
       LOG.info(`Starting tx confirmation polling (every ${POLL_INTERVAL_MS / 1000}s)`);
       this._pollingInterval = setInterval(poll, POLL_INTERVAL_MS);
+      this._pollingInterval?.unref?.();
     }, 5000);
+    bootTimer.unref?.();
   }
 }

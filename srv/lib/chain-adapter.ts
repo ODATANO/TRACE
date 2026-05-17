@@ -102,7 +102,7 @@ export interface SubmitResult {
 }
 
 export interface SubmissionStatus {
-  status: 'pending' | 'submitted' | 'confirmed' | 'failed';
+  status: 'pending' | 'submitted' | 'confirmed' | 'failed' | 'unknown';
   txHash: string | null;
   errorMessage: string | null;
 }
