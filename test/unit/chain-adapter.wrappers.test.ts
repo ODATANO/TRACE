@@ -103,11 +103,14 @@ describe('initCounter', () => {
     expect(JSON.parse(payload.inlineDatumJson)).toEqual({
       constructor: 1, fields: [{ bytes: VKH_MFR }, { int: 0 }],
     });
-    // Script params: (mfrVkh, seed OutputReference)
+    // Script params: (mfrVkh, seed OutputReference).
+    // `as any[]` because TS narrows the array element union from the literal
+    // with `constructor: 0`, and the bare `{ bytes }` literal then conflicts
+    // with the inherited Object.prototype `constructor: Function`.
     expect(JSON.parse(payload.scriptParamsJson)).toEqual([
       { bytes: VKH_MFR },
       { constructor: 0, fields: [{ bytes: SEED_TX }, { int: 3 }] },
-    ]);
+    ] as any[]);
     // mintRedeemerJson = InitCounter (constr 0)
     expect(JSON.parse(payload.mintRedeemerJson)).toEqual({
       constructor: 0, fields: [],
