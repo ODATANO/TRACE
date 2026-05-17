@@ -12,7 +12,7 @@
     "probe:int-to-bytes": "node scripts/probe-int-to-bytes.mjs"
   },
   "dependencies": {
-    "@harmoniclabs/pebble": "^0.1.8",
+    "@harmoniclabs/pebble": "^0.2.0",
     "@harmoniclabs/pebble-cli": "^0.1.0"
   }
 }

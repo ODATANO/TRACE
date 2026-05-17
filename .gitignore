@@ -48,3 +48,5 @@ artifacts/
 build/
 # Aiken's default documentation export
 
+*/bugs/
+contracts-pebble/pebble-known-bugs.md
