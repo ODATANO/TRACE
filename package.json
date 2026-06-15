@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "A simple CAP project.",
   "dependencies": {
-    "@odatano/core": "^1.7.7",
+    "@odatano/core": "^1.9.0",
     "@sap/cds": "^9",
     "express": "^4"
   },

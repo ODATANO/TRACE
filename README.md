@@ -5,7 +5,7 @@
 
 [![Tests](https://github.com/ODATANO/TRACE/actions/workflows/test.yaml/badge.svg)](https://github.com/ODATANO/TRACE/actions/workflows/test.yaml)
 [![codecov](https://codecov.io/gh/ODATANO/TRACE/branch/main/graph/badge.svg)](https://codecov.io/gh/ODATANO/TRACE)
-[![ODATANO](https://img.shields.io/badge/%40odatano%2Fcore-v1.7.7-blue)](https://www.npmjs.com/package/@odatano/core)
+[![ODATANO](https://img.shields.io/badge/%40odatano%2Fcore-v1.9.0-blue)](https://www.npmjs.com/package/@odatano/core)
 [![License](https://img.shields.io/badge/license-Apache%202.0-yellow)](LICENSE)
 
 TRACE is an example SAP FIORI application for tracking pharmaceutical supply chains, built on [SAP CAP](https://cap.cloud.sap/) and [Cardano](https://cardano.org/). It provides tamper-proof chain-of-custody for drug batches from manufacturer to pharmacy, using NFTs as on-chain proof and CIP-30 browser wallets for signing.
