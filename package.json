@@ -1,9 +1,9 @@
 {
-  "name": "trace2",
+  "name": "TRACE",
   "version": "1.0.0",
-  "description": "A simple CAP project.",
+  "description": "Pharmaceutical Supply Chain Tracking on Cardano",
   "dependencies": {
-    "@odatano/core": "^1.9.0",
+    "@odatano/core": "^1.9.1",
     "@sap/cds": "^9",
     "express": "^4"
   },
