@@ -7,7 +7,7 @@
 // This is NOT a full property-test suite — a proper cross-validation
 // against the Aiken contract requires constructing a full v3 ScriptContext
 // as PlutusData and running @harmoniclabs/plutus-machine on both scripts.
-// That work is tracked separately; see contracts-pebble/README.md.
+// That work is tracked separately; see ../README.md.
 
 import * as fs from "node:fs";
 import * as path from "node:path";

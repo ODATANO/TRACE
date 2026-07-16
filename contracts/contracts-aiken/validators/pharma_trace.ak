@@ -27,10 +27,10 @@ pub type ContractDatum {
     batch_id: ByteArray,
     step: Int,
   }
-  // manufacturer is replicated in the counter datum so the spend endpoint
-  // can source it from the datum (avoiding Pebble Bug B — see
-  // contracts-pebble/src/index.pebble header).
-  MintCounter { manufacturer: VerificationKeyHash, n: Int }
+  // Counter datum carries only the running index. The manufacturer identity is
+  // the validator parameter (bound via the parameterized script hash); the
+  // spend endpoint reads it from the param, not the datum.
+  MintCounter { n: Int }
 }
 
 // -- Mint redeemer --
@@ -104,10 +104,9 @@ pub fn can_init_counter(
 
   // Counter MUST be the first output (offchain: ODATANO lockOnScript routes the
   // primary output to index 0; change is always appended after). Subsequent
-  // outputs (change etc.) are unrestricted. The datum's manufacturer field is
-  // not validated here — security is anchored in seed control (only the real
-  // manufacturer can consume their seed UTxO). Kept symmetric with Pebble,
-  // where reading `this.manufacturer` triggers Bug B.
+  // outputs (change etc.) are unrestricted. Security is anchored in seed control
+  // (only the real manufacturer can consume their seed UTxO); the counter datum
+  // stores only the index.
   expect Some(counter_out) = list.at(tx.outputs, 0)
   let at_script = is_at_script(counter_out.address, policy_id)
   let datum_ok =
@@ -115,7 +114,7 @@ pub fn can_init_counter(
       InlineDatum(raw) -> {
         expect d: ContractDatum = raw
         when d is {
-          MintCounter { manufacturer: _m, n } -> n == 0
+          MintCounter { n } -> n == 0
           _ -> False
         }
       }
@@ -213,17 +212,24 @@ pub fn can_deliver(tx: Transaction, datum: ContractDatum) -> Bool {
   list.has(tx.extra_signatories, current_holder)
 }
 
-// The real mint validation for new batches lives here. One TX spends the
-// counter-UTxO (this function) + mints k batch NFTs (mintBatch endpoint).
-// Output[0] = updated counter. Output[1..k] = batch NFTs, each with
+// The real mint validation for a new batch lives here. One TX spends the
+// counter-UTxO (this function) + mints exactly ONE batch NFT (mintBatch
+// endpoint). Output[0] = updated counter (n+1). Output[1] = the batch NFT with
 // ChainOfCustody { manufacturer, current_holder = manufacturer, batch_id, step=0 }.
+//
+// Single-batch-per-tx (was multi-batch): the Pebble 0.3.x port can no longer
+// enumerate `tx.mint` tokens (Value became an opaque native), so BOTH validators
+// now mint one batch per tx and check it by name. The batch name is fixed to
+// int_to_bytes(n+1), and the offchain (chain-adapter mintBatchNft) already
+// mints exactly one token per call.
 pub fn can_increment_counter(
   tx: Transaction,
   datum: ContractDatum,
   own_ref: OutputReference,
   own_input_idx: Int,
+  manufacturer: VerificationKeyHash,
 ) -> Bool {
-  expect MintCounter { manufacturer, n: prev_counter } = datum
+  expect MintCounter { n: prev_counter } = datum
 
   let sig_ok = list.has(tx.extra_signatories, manufacturer)
 
@@ -234,14 +240,19 @@ pub fn can_increment_counter(
   let counter_in_place =
     assets.quantity_of(own_input.output.value, own_hash, counter_name) == 1
 
-  let mints =
-    tx.mint |> assets.tokens(own_hash) |> dict.to_pairs()
+  let next = prev_counter + 1
+  let batch_name = int_to_bytes(next)
 
-  let batch_outputs = list.drop(tx.outputs, 1)
+  // Exactly one batch token (this name, qty 1) minted under the policy. Aiken
+  // keeps this strict enumeration; the Pebble port can only assert the named
+  // token is present (`quantity_of` / `amountOf`) -- documented divergence.
+  let mint_ok =
+    when tx.mint |> assets.tokens(own_hash) |> dict.to_pairs() is {
+      [Pair(name, qty)] -> name == batch_name && qty == 1
+      _ -> False
+    }
 
-  let (final_counter, batches_ok) =
-    validate_batches(mints, batch_outputs, own_hash, manufacturer, prev_counter)
-
+  // Counter output at index 0: token preserved, datum advanced to n+1.
   expect Some(counter_out) = list.at(tx.outputs, 0)
   let counter_at_script = is_at_script(counter_out.address, own_hash)
   let counter_token_ok =
@@ -251,62 +262,37 @@ pub fn can_increment_counter(
       InlineDatum(raw) -> {
         expect d: ContractDatum = raw
         when d is {
-          MintCounter { manufacturer: m, n } -> m == manufacturer && n == final_counter
+          MintCounter { n } -> n == next
           _ -> False
         }
       }
       _ -> False
     }
 
-  sig_ok && ref_matches && counter_in_place && batches_ok && counter_at_script && counter_token_ok && counter_datum_ok
-}
-
-fn validate_batches(
-  mints: List<Pair<ByteArray, Int>>,
-  outputs: List<Output>,
-  policy: PolicyId,
-  manufacturer: VerificationKeyHash,
-  counter: Int,
-) -> (Int, Bool) {
-  when mints is {
-    [] -> (counter, True)
-    [Pair(name, qty), ..rest] -> {
-      let next = counter + 1
-      let expected = int_to_bytes(next)
-      let name_ok = name == expected
-      let qty_ok = qty == 1
-      when outputs is {
-        [] -> (next, False)
-        [out, ..rest_outs] -> {
-          let out_at_script = is_at_script(out.address, policy)
-          let nft_ok =
-            assets.quantity_of(out.value, policy, name) == 1
-          let datum_ok =
-            when out.datum is {
-              InlineDatum(raw) -> {
-                expect d: ContractDatum = raw
-                when d is {
-                  ChainOfCustody {
-                    manufacturer: m,
-                    current_holder: ch,
-                    batch_id: b,
-                    step: s,
-                  } ->
-                    m == manufacturer && ch == manufacturer && b == name && s == 0
-                  _ -> False
-                }
-              }
-              _ -> False
-            }
-          if name_ok && qty_ok && out_at_script && nft_ok && datum_ok {
-            validate_batches(rest, rest_outs, policy, manufacturer, next)
-          } else {
-            (next, False)
-          }
+  // Batch output at index 1: NFT present, ChainOfCustody datum at step 0.
+  expect Some(batch_out) = list.at(tx.outputs, 1)
+  let batch_at_script = is_at_script(batch_out.address, own_hash)
+  let batch_nft_ok =
+    assets.quantity_of(batch_out.value, own_hash, batch_name) == 1
+  let batch_datum_ok =
+    when batch_out.datum is {
+      InlineDatum(raw) -> {
+        expect d: ContractDatum = raw
+        when d is {
+          ChainOfCustody {
+            manufacturer: m,
+            current_holder: ch,
+            batch_id: b,
+            step: s,
+          } ->
+            m == manufacturer && ch == manufacturer && b == batch_name && s == 0
+          _ -> False
         }
       }
+      _ -> False
     }
-  }
+
+  sig_ok && ref_matches && counter_in_place && mint_ok && counter_at_script && counter_token_ok && counter_datum_ok && batch_at_script && batch_nft_ok && batch_datum_ok
 }
 
 // -- Validator --
@@ -336,7 +322,7 @@ validator pharma_trace(
         can_transfer(self, d, own_ref, input_idx, output_idx)
       Deliver -> can_deliver(self, d)
       IncrementCounter { own_input_idx } ->
-        can_increment_counter(self, d, own_ref, own_input_idx)
+        can_increment_counter(self, d, own_ref, own_input_idx, manufacturer)
     }
   }
 
@@ -397,7 +383,7 @@ fn counter_utxo(ref: OutputReference, n: Int) -> Input {
       address: script_addr(),
       value: assets.from_lovelace(2_000_000)
         |> assets.add(policy_id, counter_name, 1),
-      datum: InlineDatum(MintCounter { manufacturer: mfr_vkh, n }),
+      datum: InlineDatum(MintCounter { n }),
       reference_script: None,
     },
   }
@@ -408,7 +394,7 @@ fn counter_output(n: Int) -> Output {
     address: script_addr(),
     value: assets.from_lovelace(2_000_000)
       |> assets.add(policy_id, counter_name, 1),
-    datum: InlineDatum(MintCounter { manufacturer: mfr_vkh, n }),
+    datum: InlineDatum(MintCounter { n }),
     reference_script: None,
   }
 }
@@ -758,7 +744,7 @@ test deliver_rejects_without_holder_sig() {
 // -- increment_counter tests --
 
 test increment_counter_accepts_single_batch() {
-  let datum = MintCounter { manufacturer: mfr_vkh, n: 0 }
+  let datum = MintCounter { n: 0 }
   let tx =
     Transaction {
       ..tx_mod.placeholder,
@@ -767,11 +753,13 @@ test increment_counter_accepts_single_batch() {
       mint: assets.from_asset(policy_id, #"01", 1),
       extra_signatories: [mfr_vkh],
     }
-  can_increment_counter(tx, datum, counter_ref, 0) == True
+  can_increment_counter(tx, datum, counter_ref, 0, mfr_vkh) == True
 }
 
-test increment_counter_accepts_multiple_batches() {
-  let datum = MintCounter { manufacturer: mfr_vkh, n: 0 }
+test increment_counter_rejects_multiple_batches() {
+  // Single-batch-per-tx: minting >1 token under the policy is now rejected
+  // (mint_ok only matches a singleton token list).
+  let datum = MintCounter { n: 0 }
   let mint_value =
     assets.from_asset(policy_id, #"01", 1)
       |> assets.add(policy_id, #"02", 1)
@@ -789,24 +777,13 @@ test increment_counter_accepts_multiple_batches() {
       mint: mint_value,
       extra_signatories: [mfr_vkh],
     }
-  can_increment_counter(tx, datum, counter_ref, 0) == True
+  can_increment_counter(tx, datum, counter_ref, 0, mfr_vkh) == False
 }
 
-test increment_counter_rejects_without_manufacturer_sig() {
-  let datum = MintCounter { manufacturer: mfr_vkh, n: 0 }
-  let tx =
-    Transaction {
-      ..tx_mod.placeholder,
-      inputs: [counter_utxo(counter_ref, 0)],
-      outputs: [counter_output(1), batch_output(#"01")],
-      mint: assets.from_asset(policy_id, #"01", 1),
-      extra_signatories: [],
-    }
-  can_increment_counter(tx, datum, counter_ref, 0) == False
-}
-
-test increment_counter_rejects_skipped_number() {
-  let datum = MintCounter { manufacturer: mfr_vkh, n: 0 }
+test increment_counter_rejects_wrong_batch_name() {
+  // Counter advances to 1 but the minted/locked batch uses name #"02"
+  // (should be int_to_bytes(1) = #"01").
+  let datum = MintCounter { n: 0 }
   let tx =
     Transaction {
       ..tx_mod.placeholder,
@@ -815,11 +792,37 @@ test increment_counter_rejects_skipped_number() {
       mint: assets.from_asset(policy_id, #"02", 1),
       extra_signatories: [mfr_vkh],
     }
-  can_increment_counter(tx, datum, counter_ref, 0) == False
+  can_increment_counter(tx, datum, counter_ref, 0, mfr_vkh) == False
+}
+
+test increment_counter_rejects_without_manufacturer_sig() {
+  let datum = MintCounter { n: 0 }
+  let tx =
+    Transaction {
+      ..tx_mod.placeholder,
+      inputs: [counter_utxo(counter_ref, 0)],
+      outputs: [counter_output(1), batch_output(#"01")],
+      mint: assets.from_asset(policy_id, #"01", 1),
+      extra_signatories: [],
+    }
+  can_increment_counter(tx, datum, counter_ref, 0, mfr_vkh) == False
+}
+
+test increment_counter_rejects_skipped_number() {
+  let datum = MintCounter { n: 0 }
+  let tx =
+    Transaction {
+      ..tx_mod.placeholder,
+      inputs: [counter_utxo(counter_ref, 0)],
+      outputs: [counter_output(1), batch_output(#"02")],
+      mint: assets.from_asset(policy_id, #"02", 1),
+      extra_signatories: [mfr_vkh],
+    }
+  can_increment_counter(tx, datum, counter_ref, 0, mfr_vkh) == False
 }
 
 test increment_counter_rejects_wrong_new_counter_value() {
-  let datum = MintCounter { manufacturer: mfr_vkh, n: 0 }
+  let datum = MintCounter { n: 0 }
   let tx =
     Transaction {
       ..tx_mod.placeholder,
@@ -828,11 +831,11 @@ test increment_counter_rejects_wrong_new_counter_value() {
       mint: assets.from_asset(policy_id, #"01", 1),
       extra_signatories: [mfr_vkh],
     }
-  can_increment_counter(tx, datum, counter_ref, 0) == False
+  can_increment_counter(tx, datum, counter_ref, 0, mfr_vkh) == False
 }
 
 test increment_counter_rejects_batch_with_wrong_holder() {
-  let datum = MintCounter { manufacturer: mfr_vkh, n: 0 }
+  let datum = MintCounter { n: 0 }
   let bad_batch =
     Output {
       address: script_addr(),
@@ -856,5 +859,5 @@ test increment_counter_rejects_batch_with_wrong_holder() {
       mint: assets.from_asset(policy_id, #"01", 1),
       extra_signatories: [mfr_vkh],
     }
-  can_increment_counter(tx, datum, counter_ref, 0) == False
+  can_increment_counter(tx, datum, counter_ref, 0, mfr_vkh) == False
 }

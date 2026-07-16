@@ -1,0 +1,160 @@
+
+// TRACE Cold-Chain Condition-Monitoring Validator
+// Pebble port of contracts-aiken/validators/cold_chain.ak
+//
+// Build: this is a SECOND entry point, separate from src/index.pebble.
+// Compile with `entry: src/cold_chain.pebble` (npm run compile:coldchain).
+//
+// -----------------------------------------------------------------------------
+// Targets @harmoniclabs/pebble ^0.3.4. One 0.3.x-specific note:
+//
+//   `Value` is now an opaque native built-in: the old `tx.mint[policy]`
+//   map-indexing / enumeration is gone (ERROR 267 "cannot be indexed").
+//   Only `amountOf(policy, name)` remains. The monitor uses a single
+//   empty-named thread token, so we query that name directly.
+//   NOTE: this cannot express Aiken's "exactly one token under the policy"
+//   check. Aiken (contracts/validators/cold_chain.ak) stays strict and is
+//   the on-chain source of truth (chain-adapter loads plutus.json); this
+//   port is the cross-check, slightly weaker only on that one invariant.
+//
+//   (The 0.3.0–0.3.3 deBruijn codegen crash on a lone indexed spend +
+//   >=2 mints is FIXED in 0.3.4. `close` remains a genuine finalise endpoint.)
+//
+// -----------------------------------------------------------------------------
+// Canonical ABI -- both Aiken and Pebble MUST match these indices.
+// Mint:  InitMonitor=0   BurnMonitor=1
+// Spend: RecordReadings=0 Close=1
+// Datum: MonitorState=0
+// Do NOT reorder variants/methods within a purpose group without updating
+// BOTH files + the offchain.
+// -----------------------------------------------------------------------------
+
+struct MonitorDatum {
+    // Single-variant struct -> Constr 0.
+    // Oracle identity is the script parameter `this.oracle` (bound via the
+    // parameterized script hash); the datum stores only monitor state.
+    MonitorState {
+        batch_id: bytes,
+        // Allowed spec range, signed int milli-degrees Celsius
+        // (fridge 2..8 C -> 2000..8000; freezer -25 C -> -25000).
+        min_milli_c: int,
+        max_milli_c: int,
+        reading_count: int,   // strictly monotonic
+        breach_count: int,    // monotonic
+        commit_root: bytes,   // 32-byte commitment to the off-chain reading log
+        breached: int         // 0 = clean, 1 = excursion (latched)
+    }
+}
+
+contract ColdChain {
+    param oracle: PubKeyHash;
+    param seed: TxOutRef;
+
+    // === Mint methods ===
+    // Mint Constr order MUST match Aiken MintAction: InitMonitor=0, BurnMonitor=1.
+
+    // Mint: bootstrap a monitor thread. Consume the one-shot seed (-> unique
+    // policy), mint exactly one empty-named token, lock it at the script with a
+    // zeroed MonitorState as output[0].
+    mint initMonitor() {
+        const { tx, policy } = context;
+
+        assert tx.inputs.some(({ ref }) => ref == this.seed);
+
+        // 0.3.x: native Value -- query the known (empty) thread name directly.
+        assert tx.mint.amountOf( policy, # ) == 1;
+
+        const { address, value, datum } = tx.outputs[0];
+        assert address.payment.hash() == policy;
+        assert value.amountOf( policy, # ) == 1;
+
+        const InlineDatum{ datum: MonitorState{
+            min_milli_c,
+            max_milli_c,
+            reading_count,
+            breach_count,
+            commit_root,
+            breached
+        } as MonitorDatum } = datum;
+
+        assert reading_count == 0;
+        assert breach_count == 0;
+        assert breached == 0;
+        assert min_milli_c <= max_milli_c;
+        assert commit_root.length() == 32;
+    }
+
+    // Mint: burn the thread token (negative quantity on the empty name).
+    mint burnMonitor() {
+        const { tx, policy } = context;
+        assert tx.mint.amountOf( policy, # ) < 0;
+    }
+
+    // === Spend methods ===
+    // Spend Constr order MUST match Aiken SpendAction: RecordReadings=0, Close=1.
+
+    // Spend: append a batch of off-chain readings to the monitor thread.
+    spend recordReadings( inputIdx: int, outputIdx: int ) {
+        const {
+            tx,
+            optionalDatum: Some{
+                value: MonitorState{
+                    batch_id,
+                    min_milli_c,
+                    max_milli_c,
+                    reading_count,
+                    breach_count,
+                    breached
+                } as MonitorDatum
+            }
+            spendingRef
+        } = context;
+
+        const { ref: ownInputRef, resolved: ownInput } = tx.inputs[ inputIdx ];
+        assert spendingRef == ownInputRef;
+        const ownHash = ownInput.address.payment.hash();
+
+        // Oracle is the script parameter (bound via the script hash).
+        assert tx.requiredSigners.includes( this.oracle );
+
+        const { address: outAddr, value: outValue, datum: outDatum } = tx.outputs[ outputIdx ];
+        assert outAddr.payment.hash() == ownHash;       // stays in contract
+        assert outValue.amountOf( ownHash, # ) == 1;    // thread NFT preserved
+
+        const InlineDatum{ datum: MonitorState{
+            batch_id: nextBatch,
+            min_milli_c: nextMin,
+            max_milli_c: nextMax,
+            reading_count: nextCount,
+            breach_count: nextBreaches,
+            commit_root: nextRoot,
+            breached: nextBreached
+        } as MonitorDatum } = outDatum;
+
+        // Immutable fields
+        assert nextBatch == batch_id;
+        assert nextMin == min_milli_c;
+        assert nextMax == max_milli_c;
+
+        // Monotonic progress
+        assert nextCount > reading_count;
+        assert nextBreaches >= breach_count;
+        assert nextRoot.length() == 32;
+
+        // Latch: once breached stays breached; any new breach sets the flag.
+        const expectedBreached = (breached == 1 || nextBreaches > breach_count) ? 1 : 0;
+        assert nextBreached == expectedBreached;
+    }
+
+    // Spend: finalise the monitor (e.g. at delivery). Oracle signs; the thread
+    // NFT may then leave the script / be burned. No continuing-output check.
+    // (Also required to keep two spend methods -- see header note (2).)
+    spend close() {
+        const {
+            tx,
+            optionalDatum: Some{ value: MonitorState{ batch_id: _bid } as MonitorDatum }
+        } = context;
+
+        assert tx.requiredSigners.includes( this.oracle );
+    }
+}

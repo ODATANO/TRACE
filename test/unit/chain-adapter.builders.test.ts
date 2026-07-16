@@ -129,17 +129,17 @@ describe('buildDeliverRedeemer', () => {
 });
 
 describe('buildMintCounterDatum', () => {
-  it('emits constructor=1 with vkh bytes + int count', () => {
-    const parsed = JSON.parse(buildMintCounterDatum(VKH, 42));
+  it('emits constructor=1 with the index only (manufacturer is the script param)', () => {
+    const parsed = JSON.parse(buildMintCounterDatum(42));
     expect(parsed).toEqual({
       constructor: 1,
-      fields: [{ bytes: VKH }, { int: 42 }],
+      fields: [{ int: 42 }],
     });
   });
 
   it('accepts zero as the initial counter value', () => {
-    const parsed = JSON.parse(buildMintCounterDatum(VKH, 0));
-    expect(parsed.fields[1]).toEqual({ int: 0 });
+    const parsed = JSON.parse(buildMintCounterDatum(0));
+    expect(parsed.fields[0]).toEqual({ int: 0 });
   });
 });
 

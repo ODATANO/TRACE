@@ -52,4 +52,10 @@ build/
 # Aiken's default documentation export
 
 */bugs/
-contracts-pebble/pebble-known-bugs.md
+contracts/contracts-pebble/pebble-known-bugs.md
+# Compiler/build output in the contracts workspaces (plutus.json is the tracked artifact)
+contracts/contracts-aiken/build_err.txt
+contracts/contracts-aiken/build_out.txt
+contracts/contracts-aiken/artifacts/
+contracts/contracts-pebble/out/
+contracts/contracts-pebble/out-coldchain/

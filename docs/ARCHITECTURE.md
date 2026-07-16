@@ -8,7 +8,7 @@
 |-------|-----------|
 | Smart Contracts | Aiken (Plutus V3) |
 | Blockchain | Cardano preview testnet |
-| Chain Gateway | @odatano/core v1.7.7 (CAP plugin) |
+| Chain Gateway | @odatano/core v1.10.0 (CAP plugin) |
 | Backend | SAP CAP v9, Node.js, TypeScript |
 | Database | SQLite (dev), SAP HANA (prod) |
 | Frontend | Freestyle SAPUI5 (OpenUI5 CDN, sap_horizon) |
@@ -21,9 +21,11 @@ Participants (Manufacturer | Distributor | Pharmacy | Regulator)
      │
      ├──< Batches (DRAFT > MINTED > IN_TRANSIT > DELIVERED | RECALLED)
      │      │
-     │      ├──< OnChainAssets   1:1  (policyId, assetName, UTxO ref, step)
-     │      ├──< ProofEvents     1:N  (MINT, TRANSFER, VERIFY, DOCUMENT_ANCHOR)
-     │      └──< DocumentAnchors 1:N  (doc hash, type, cold-chain temps)
+     │      ├──< OnChainAssets     1:1  (policyId, assetName, UTxO ref, step)
+     │      ├──< ProofEvents       1:N  (MINT, TRANSFER, VERIFY, DOCUMENT_ANCHOR, ...)
+     │      ├──< DocumentAnchors   1:N  (doc hash, type, cold-chain temps)
+     │      └──< ConditionMonitors 1:N  (on-chain cold-chain monitor: range, breach state)
+     │             └──< ConditionReadings 1:N  (committed sensor readings)
 ```
 
 ## Project Structure
@@ -31,17 +33,19 @@ Participants (Manufacturer | Distributor | Pharmacy | Regulator)
 ```
 TRACE/
 ├── db/
-│   ├── schema.cds         5 entities
+│   ├── schema.cds         8 entities
 │   └── data/              CSV seed data
 ├── srv/
-│   ├── trace-service.cds  OData V4 service (8 actions + 1 function)
+│   ├── trace-service.cds  OData V4 service (15 actions + 1 function)
 │   ├── trace-service.ts   Handler implementation
 │   └── lib/
 │       ├── chain-adapter.ts  ODATANO service wrapper
 │       └── digest.ts         SHA-256 + canonicalization
 ├── contracts/
-│   ├── validators/pharma_trace.ak  Aiken contract
-│   └── plutus.json                 Compiled Plutus V3
+│   ├── contracts-aiken/   Aiken sources (canonical on-chain) + plutus.json
+│   ├── contracts-pebble/  Pebble port (differential cross-check)
+│   └── README.md          Contract overview (both implementations)
+├── scripts/testnet/       Cold-chain e2e against live Preview
 ├── app/trace/webapp/      SAPUI5 frontend
 └── package.json
 ```

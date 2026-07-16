@@ -10,6 +10,15 @@ export function computeDigest(payload: unknown): string {
 }
 
 /**
+ * Raw SHA-256 of a UTF-8 string, hex-encoded. Used for the cold-chain commit
+ * root hash-chain, where inputs are already canonical hex/strings (unlike
+ * computeDigest, which canonicalizes JSON first).
+ */
+export function sha256Hex(input: string): string {
+  return crypto.createHash('sha256').update(input, 'utf8').digest('hex');
+}
+
+/**
  * Canonicalize a value by sorting object keys recursively.
  * Produces a deterministic JSON string regardless of key insertion order.
  */

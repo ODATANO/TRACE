@@ -5,7 +5,7 @@
 
 [![Tests](https://github.com/ODATANO/TRACE/actions/workflows/test.yaml/badge.svg)](https://github.com/ODATANO/TRACE/actions/workflows/test.yaml)
 [![codecov](https://codecov.io/gh/ODATANO/TRACE/branch/main/graph/badge.svg)](https://codecov.io/gh/ODATANO/TRACE)
-[![ODATANO](https://img.shields.io/badge/%40odatano%2Fcore-v1.9.0-blue)](https://www.npmjs.com/package/@odatano/core)
+[![ODATANO](https://img.shields.io/badge/%40odatano%2Fcore-v1.10.0-blue)](https://www.npmjs.com/package/@odatano/core)
 [![License](https://img.shields.io/badge/license-Apache%202.0-yellow)](LICENSE)
 
 TRACE is an example SAP FIORI application for tracking pharmaceutical supply chains, built on [SAP CAP](https://cap.cloud.sap/) and [Cardano](https://cardano.org/). It provides tamper-proof chain-of-custody for drug batches from manufacturer to pharmacy, using NFTs as on-chain proof and CIP-30 browser wallets for signing.
@@ -17,6 +17,7 @@ Blockchain integration via [ODATANO](https://github.com/ODATANO/ODATANO), a CAP 
 - **Batch NFT Minting:** Manufacturer mints a unique NFT per drug batch with on-chain datum
 - **Chain of Custody Transfers:** Each handoff (manufacturer > distributor > pharmacy) is a Plutus spend tx
 - **Document Anchoring:** SHA-256 hashes of certificates and cold-chain telemetry anchored via CIP-20 metadata
+- **Cold-Chain Monitoring:** On-chain temperature monitor per batch (`InitColdChainMonitor` → `RecordSensorReadings` → `CloseColdChainMonitor`), breach detection enforced by the `cold_chain` Plutus validator (see [contracts/README.md](contracts/README.md))
 - **Public Verification:** Anyone can verify a batch's full custody chain
 - **Transaction Monitoring:** 30s background polling, automatic PENDING > CONFIRMED/FAILED transitions
 - **Retry Mechanics:** Failed transactions can be rebuilt and resubmitted
@@ -25,7 +26,7 @@ Blockchain integration via [ODATANO](https://github.com/ODATANO/ODATANO), a CAP 
 
 ### Prerequisites
 
-- Node.js >= 18
+- Node.js >= 22
 - npm >= 9
 - A CIP-30 Cardano wallet (Nami, Eternl, Lace) on **preview** network
 
@@ -34,7 +35,7 @@ Blockchain integration via [ODATANO](https://github.com/ODATANO/ODATANO), a CAP 
 ```bash
 git clone https://github.com/ODATANO/TRACE && cd TRACE
 npm install
-TX_BUILDERS=buildooor npx cds watch
+npx cds watch
 ```
 
 `cds watch` auto-deploys the SQLite schema (TRACE + ODATANO plugin) on first start.

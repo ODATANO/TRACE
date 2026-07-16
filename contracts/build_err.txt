@@ -1,1 +1,0 @@
-    Compiling trace/trace 0.0.0 (C:\Users\max\TRACE\contracts)

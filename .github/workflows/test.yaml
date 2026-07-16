@@ -36,19 +36,19 @@ jobs:
         run: aiken --version
 
       - name: aiken check
-        working-directory: contracts
+        working-directory: contracts/contracts-aiken
         run: aiken check
 
       - name: aiken build
-        working-directory: contracts
+        working-directory: contracts/contracts-aiken
         run: aiken build
 
       - name: Verify plutus.json is up to date with sources
-        working-directory: contracts
+        working-directory: contracts/contracts-aiken
         run: |
           if ! git diff --exit-code plutus.json; then
-            echo "::error::contracts/plutus.json is out of sync with the Aiken sources."
-            echo "Run 'aiken build' in contracts/ and commit the updated plutus.json."
+            echo "::error::contracts/contracts-aiken/plutus.json is out of sync with the Aiken sources."
+            echo "Run 'aiken build' in contracts/contracts-aiken/ and commit the updated plutus.json."
             exit 1
           fi
 

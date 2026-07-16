@@ -7,12 +7,15 @@
   "scripts": {
     "build": "node scripts/compile.js && node scripts/flat-to-cbor.js",
     "compile": "node scripts/compile.js",
+    "compile:coldchain": "node scripts/compile-coldchain.js",
     "convert": "node scripts/flat-to-cbor.js",
     "check": "node scripts/sanity-check.js",
-    "probe:int-to-bytes": "node scripts/probe-int-to-bytes.mjs"
+    "diff:pharma": "node scripts/compile.js && node scripts/flat-to-cbor.js && node scripts/diff-equiv.mjs",
+    "diff:coldchain": "node scripts/compile-coldchain.js && node scripts/diff-equiv-coldchain.mjs",
+    "diff": "npm run diff:pharma && npm run diff:coldchain"
   },
   "dependencies": {
-    "@harmoniclabs/pebble": "^0.2.0",
-    "@harmoniclabs/pebble-cli": "^0.1.0"
+    "@harmoniclabs/pebble": "^0.3.4",
+    "@harmoniclabs/pebble-cli": "^0.3.4"
   }
 }

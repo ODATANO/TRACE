@@ -1,6 +1,6 @@
 import cds from '@sap/cds';
 import * as chainAdapter from './lib/chain-adapter';
-import { computeDigest } from './lib/digest';
+import { computeDigest, sha256Hex } from './lib/digest';
 
 const LOG = cds.log('trace');
 const POLL_INTERVAL_MS = (cds.env.requires as any)?.['trace-service']?.pollIntervalMs ?? 30_000;
@@ -8,7 +8,7 @@ const POLL_INTERVAL_MS = (cds.env.requires as any)?.['trace-service']?.pollInter
 export default class TraceService extends cds.ApplicationService {
 
   init() {
-    const { Batches, Participants, OnChainAssets, ProofEvents, DocumentAnchors, ManufacturerCounters } = this.entities;
+    const { Batches, Participants, OnChainAssets, ProofEvents, DocumentAnchors, ManufacturerCounters, ConditionMonitors, ConditionReadings } = this.entities;
 
     // -----------------------------------------------------------------------
     // InitManufacturerCounter — one-shot bootstrap of the counter NFT
@@ -324,6 +324,15 @@ export default class TraceService extends cds.ApplicationService {
           .where({ ID: pendingCounter.ID });
       }
 
+      // Also update any pending ColdChain monitor init linked to this signingRequestId
+      const pendingMonitor = await SELECT.one.from(ConditionMonitors)
+        .where({ signingRequestId, status: 'PENDING' });
+      if (pendingMonitor) {
+        await UPDATE(ConditionMonitors)
+          .set({ status: 'SUBMITTED', submissionId: result.submissionId })
+          .where({ ID: pendingMonitor.ID });
+      }
+
       // Also update any DocumentAnchor linked to this signingRequestId
       const pendingAnchor = await SELECT.one.from(DocumentAnchors)
         .where({ signingRequestId, status: 'PENDING' });
@@ -470,7 +479,36 @@ export default class TraceService extends cds.ApplicationService {
         }
       }
 
-      const totalChecked = submitted.length + submittedRegistrations.length + submittedCounters.length;
+      // Also check SUBMITTED cold-chain monitor inits
+      const submittedMonitors = await SELECT.from(ConditionMonitors)
+        .where({ status: 'SUBMITTED' });
+
+      for (const m of submittedMonitors) {
+        if (!m.submissionId) continue;
+        const check = await chainAdapter.checkSubmissionStatus(m.submissionId);
+
+        if (check.status === 'confirmed') {
+          const monTxHash = check.txHash ?? null;
+          let monIdx: number | null = null;
+          if (monTxHash) {
+            monIdx = await chainAdapter.getAssetOutputIndex(monTxHash, m.policyId, '');
+          }
+          await UPDATE(ConditionMonitors)
+            .set({
+              status: 'CONFIRMED',
+              currentUtxoRef: monTxHash ? `${monTxHash}#${monIdx ?? 0}` : null
+            })
+            .where({ ID: m.ID });
+          confirmed++;
+        } else if (check.status === 'failed') {
+          await UPDATE(ConditionMonitors)
+            .set({ status: 'FAILED', errorMessage: check.errorMessage })
+            .where({ ID: m.ID });
+          failed++;
+        }
+      }
+
+      const totalChecked = submitted.length + submittedRegistrations.length + submittedCounters.length + submittedMonitors.length;
       LOG.info(`Checked ${totalChecked} submissions: ${confirmed} confirmed, ${failed} failed`);
       return { checked: totalChecked, confirmed, failed };
     });
@@ -589,6 +627,74 @@ export default class TraceService extends cds.ApplicationService {
 
         const signingReq = await chainAdapter.createSigningRequest(result.buildId);
 
+        await UPDATE(ProofEvents)
+          .set({ buildId: result.buildId, signingRequestId: signingReq.signingRequestId, status: 'PENDING', errorMessage: null })
+          .where({ ID: evt.ID });
+
+        return { buildId: result.buildId, signingRequestId: signingReq.signingRequestId, unsignedCbor: signingReq.unsignedTxCbor, txBodyHash: signingReq.txBodyHash };
+      }
+
+      if (evt.eventType === 'SENSOR_ATTESTATION') {
+        if (!evt.monitorId) return req.reject(409, `Sensor event missing monitorId`);
+        const monitor = await SELECT.one.from(ConditionMonitors).where({ ID: evt.monitorId });
+        if (!monitor) return req.reject(409, `Monitor ${evt.monitorId} not found`);
+        if (monitor.status !== 'CONFIRMED' || !monitor.currentUtxoRef) {
+          return req.reject(409, `Monitor not in a spendable state (status=${monitor.status})`);
+        }
+        if (monitor.oracleVkh && monitor.oracleVkh !== walletVkh) return req.reject(403, `Only the monitor oracle can retry this`);
+
+        // Recompute the target state from the still-uncommitted readings (the
+        // in-flight guard guarantees these belong to exactly this event). The
+        // commit root is unchanged — the monitor never advanced past this tx.
+        const uncommitted = await SELECT.from(ConditionReadings)
+          .where({ monitor_ID: monitor.ID, committedTxHash: null })
+          .orderBy('createdAt asc');
+        if (!uncommitted.length) return req.reject(409, `No uncommitted readings to re-commit`);
+        const breachDelta = uncommitted.filter((r: any) => !r.withinSpec).length;
+
+        const [scriptTxHash, indexStr] = monitor.currentUtxoRef.split('#');
+        const result = await chainAdapter.recordReadings({
+          senderAddress: walletAddress,
+          oracleVkh: walletVkh,
+          seedTxHash: monitor.seedTxHash,
+          seedIdx: monitor.seedIdx,
+          scriptTxHash,
+          scriptOutputIndex: parseInt(indexStr, 10),
+          batchIdHex: monitor.batchIdHex,
+          minMilliC: monitor.minMilliC,
+          maxMilliC: monitor.maxMilliC,
+          newReadingCount: (monitor.readingCount ?? 0) + uncommitted.length,
+          newBreachCount: (monitor.breachCount ?? 0) + breachDelta,
+          newCommitRoot: evt.payloadDigest,
+          newBreached: !!monitor.breached || breachDelta > 0
+        });
+        const signingReq = await chainAdapter.createSigningRequest(result.buildId);
+        await UPDATE(ProofEvents)
+          .set({ buildId: result.buildId, signingRequestId: signingReq.signingRequestId, status: 'PENDING', errorMessage: null })
+          .where({ ID: evt.ID });
+
+        return { buildId: result.buildId, signingRequestId: signingReq.signingRequestId, unsignedCbor: signingReq.unsignedTxCbor, txBodyHash: signingReq.txBodyHash };
+      }
+
+      if (evt.eventType === 'MONITOR_CLOSE') {
+        if (!evt.monitorId) return req.reject(409, `Close event missing monitorId`);
+        const monitor = await SELECT.one.from(ConditionMonitors).where({ ID: evt.monitorId });
+        if (!monitor) return req.reject(409, `Monitor ${evt.monitorId} not found`);
+        if (monitor.status !== 'CONFIRMED' || !monitor.currentUtxoRef) {
+          return req.reject(409, `Monitor not in a spendable state (status=${monitor.status})`);
+        }
+        if (monitor.oracleVkh && monitor.oracleVkh !== walletVkh) return req.reject(403, `Only the monitor oracle can retry this`);
+
+        const [scriptTxHash, indexStr] = monitor.currentUtxoRef.split('#');
+        const result = await chainAdapter.closeMonitor({
+          senderAddress: walletAddress,
+          oracleVkh: walletVkh,
+          seedTxHash: monitor.seedTxHash,
+          seedIdx: monitor.seedIdx,
+          scriptTxHash,
+          scriptOutputIndex: parseInt(indexStr, 10)
+        });
+        const signingReq = await chainAdapter.createSigningRequest(result.buildId);
         await UPDATE(ProofEvents)
           .set({ buildId: result.buildId, signingRequestId: signingReq.signingRequestId, status: 'PENDING', errorMessage: null })
           .where({ ID: evt.ID });
@@ -1024,6 +1130,241 @@ export default class TraceService extends cds.ApplicationService {
     });
 
     // -----------------------------------------------------------------------
+    // InitColdChainMonitor — one-shot mint of a cold-chain monitor thread
+    // -----------------------------------------------------------------------
+    this.on('InitColdChainMonitor', async (req) => {
+      const { batchId, minMilliC, maxMilliC, walletAddress, walletVkh } =
+        req.data as { batchId: string; minMilliC: number; maxMilliC: number; walletAddress: string; walletVkh: string };
+
+      if (!walletAddress || !walletVkh) return req.reject(400, `Wallet address and VKH are required (connect wallet first)`);
+      if (minMilliC == null || maxMilliC == null) return req.reject(400, `minMilliC and maxMilliC are required`);
+      if (minMilliC > maxMilliC) return req.reject(400, `minMilliC must be <= maxMilliC`);
+
+      const batch = await SELECT.one.from(Batches).where({ ID: batchId });
+      if (!batch) return req.reject(404, `Batch ${batchId} not found`);
+
+      // batch_id bound in the datum: the on-chain batch NFT name if minted,
+      // else hex(batchNumber) as a stable identifier.
+      const asset = await SELECT.one.from(OnChainAssets).where({ batch_ID: batchId });
+      const batchIdHex = asset?.assetName || chainAdapter.toHex(batch.batchNumber);
+
+      const seed = await chainAdapter.pickSeedUtxo(walletAddress);
+      const genesisRoot = sha256Hex(`coldchain-genesis:${batchIdHex}:${walletVkh}:${seed.txHash}#${seed.outputIndex}`);
+
+      const result = await chainAdapter.initMonitor({
+        senderAddress: walletAddress,
+        oracleVkh: walletVkh,
+        seedTxHash: seed.txHash,
+        seedIdx: seed.outputIndex,
+        batchIdHex,
+        minMilliC,
+        maxMilliC,
+        genesisRoot
+      });
+
+      const signingReq = await chainAdapter.createSigningRequest(result.buildId);
+
+      const monitorId = cds.utils.uuid();
+      await INSERT.into(ConditionMonitors).entries({
+        ID: monitorId,
+        batch_ID: batchId,
+        oracleVkh: walletVkh,
+        batchIdHex,
+        policyId: result.policyId,
+        scriptAddress: result.scriptAddress,
+        seedTxHash: result.seedTxHash,
+        seedIdx: result.seedIdx,
+        minMilliC,
+        maxMilliC,
+        readingCount: 0,
+        breachCount: 0,
+        commitRoot: genesisRoot,
+        breached: false,
+        status: 'PENDING',
+        buildId: result.buildId,
+        signingRequestId: signingReq.signingRequestId
+      });
+
+      return {
+        monitorId,
+        policyId: result.policyId,
+        scriptAddress: result.scriptAddress,
+        unsignedCbor: signingReq.unsignedTxCbor,
+        buildId: result.buildId,
+        signingRequestId: signingReq.signingRequestId,
+        txBodyHash: signingReq.txBodyHash
+      };
+    });
+
+    // -----------------------------------------------------------------------
+    // RecordSensorReadings — commit a batch of off-chain readings (spend)
+    // -----------------------------------------------------------------------
+    this.on('RecordSensorReadings', async (req) => {
+      const { monitorId, readingsJson, walletAddress, walletVkh } =
+        req.data as { monitorId: string; readingsJson: string; walletAddress: string; walletVkh: string };
+
+      if (!walletAddress || !walletVkh) return req.reject(400, `Wallet address and VKH are required (connect wallet first)`);
+
+      const monitor = await SELECT.one.from(ConditionMonitors).where({ ID: monitorId });
+      if (!monitor) return req.reject(404, `Monitor ${monitorId} not found`);
+      if (monitor.status !== 'CONFIRMED') return req.reject(409, `Monitor not confirmed on-chain (status=${monitor.status})`);
+      if (!monitor.currentUtxoRef) return req.reject(409, `Monitor has no current UTxO reference — init not yet confirmed`);
+      if (monitor.oracleVkh && monitor.oracleVkh !== walletVkh) return req.reject(403, `Only the monitor oracle can record readings`);
+
+      // In-flight guard: at most one un-finalized cold-chain tx per monitor.
+      // Each RecordReadings spends the current monitor UTxO, and confirmation
+      // reconciles ALL uncommitted readings — so a second in-flight (or stuck
+      // FAILED) event would double-spend and mix readings.
+      const inflight = await SELECT.one.from(ProofEvents).where({
+        monitorId,
+        eventType: { in: ['SENSOR_ATTESTATION', 'MONITOR_CLOSE'] },
+        status: { in: ['PENDING', 'SUBMITTED', 'FAILED'] }
+      });
+      if (inflight) {
+        return req.reject(409, `A cold-chain tx is already in flight for this monitor (event ${inflight.ID}, status ${inflight.status}). Wait for confirmation, or RetryFailedTransaction if it FAILED.`);
+      }
+
+      let readings: any[];
+      try {
+        readings = JSON.parse(readingsJson);
+      } catch {
+        return req.reject(400, `readingsJson is not valid JSON`);
+      }
+      if (!Array.isArray(readings) || readings.length === 0) return req.reject(400, `readingsJson must be a non-empty array`);
+
+      // Per-reading: compute spec compliance + a canonical leaf hash.
+      const prepared = readings.map((r: any) => {
+        const milliValue = Number(r.milliValue);
+        const metric = r.metric || 'TEMPERATURE';
+        const recordedAt = r.recordedAt || new Date().toISOString();
+        const withinSpec = milliValue >= monitor.minMilliC && milliValue <= monitor.maxMilliC;
+        const leafHash = computeDigest({ metric, milliValue, recordedAt });
+        return { metric, milliValue, recordedAt, withinSpec, leafHash };
+      });
+
+      const breachDelta = prepared.filter(p => !p.withinSpec).length;
+      const newReadingCount = (monitor.readingCount ?? 0) + prepared.length;
+      const newBreachCount = (monitor.breachCount ?? 0) + breachDelta;
+      const newBreached = !!monitor.breached || breachDelta > 0;
+      // Hash-chain commitment: new_root = sha256(prev_root || concat(leafHashes)).
+      const newCommitRoot = sha256Hex(monitor.commitRoot + prepared.map(p => p.leafHash).join(''));
+
+      const [scriptTxHash, idxStr] = monitor.currentUtxoRef.split('#');
+
+      const result = await chainAdapter.recordReadings({
+        senderAddress: walletAddress,
+        oracleVkh: walletVkh,
+        seedTxHash: monitor.seedTxHash,
+        seedIdx: monitor.seedIdx,
+        scriptTxHash,
+        scriptOutputIndex: parseInt(idxStr, 10),
+        batchIdHex: monitor.batchIdHex,
+        minMilliC: monitor.minMilliC,
+        maxMilliC: monitor.maxMilliC,
+        newReadingCount,
+        newBreachCount,
+        newCommitRoot,
+        newBreached
+      });
+
+      const signingReq = await chainAdapter.createSigningRequest(result.buildId);
+
+      // Persist readings — uncommitted (committedTxHash null) until confirmation.
+      for (const p of prepared) {
+        await INSERT.into(ConditionReadings).entries({
+          monitor_ID: monitorId,
+          metric: p.metric,
+          milliValue: p.milliValue,
+          recordedAt: p.recordedAt,
+          withinSpec: p.withinSpec,
+          leafHash: p.leafHash
+        });
+      }
+
+      // Track the tx via a ProofEvent so the existing polling confirms it and
+      // _applyConfirmationSideEffects advances the monitor.
+      await INSERT.into(ProofEvents).entries({
+        batch_ID: monitor.batch_ID,
+        eventType: 'SENSOR_ATTESTATION',
+        payloadDigest: newCommitRoot,
+        schema: 'TRACE_COLDCHAIN_V1',
+        signerVkh: walletVkh,
+        monitorId,
+        buildId: result.buildId,
+        signingRequestId: signingReq.signingRequestId,
+        status: 'PENDING'
+      });
+
+      return {
+        unsignedCbor: signingReq.unsignedTxCbor,
+        buildId: result.buildId,
+        signingRequestId: signingReq.signingRequestId,
+        txBodyHash: signingReq.txBodyHash,
+        newReadingCount,
+        newBreachCount,
+        breached: newBreached
+      };
+    });
+
+    // -----------------------------------------------------------------------
+    // CloseColdChainMonitor — finalise a monitor (NFT leaves the script)
+    // -----------------------------------------------------------------------
+    this.on('CloseColdChainMonitor', async (req) => {
+      const { monitorId, walletAddress, walletVkh } =
+        req.data as { monitorId: string; walletAddress: string; walletVkh: string };
+
+      if (!walletAddress || !walletVkh) return req.reject(400, `Wallet address and VKH are required (connect wallet first)`);
+
+      const monitor = await SELECT.one.from(ConditionMonitors).where({ ID: monitorId });
+      if (!monitor) return req.reject(404, `Monitor ${monitorId} not found`);
+      if (monitor.status !== 'CONFIRMED') return req.reject(409, `Monitor not confirmed on-chain (status=${monitor.status})`);
+      if (!monitor.currentUtxoRef) return req.reject(409, `Monitor has no current UTxO reference`);
+      if (monitor.oracleVkh && monitor.oracleVkh !== walletVkh) return req.reject(403, `Only the monitor oracle can close it`);
+
+      // In-flight guard (see RecordSensorReadings): no concurrent cold-chain tx.
+      const inflightClose = await SELECT.one.from(ProofEvents).where({
+        monitorId,
+        eventType: { in: ['SENSOR_ATTESTATION', 'MONITOR_CLOSE'] },
+        status: { in: ['PENDING', 'SUBMITTED', 'FAILED'] }
+      });
+      if (inflightClose) {
+        return req.reject(409, `A cold-chain tx is already in flight for this monitor (event ${inflightClose.ID}, status ${inflightClose.status}). Wait for confirmation, or RetryFailedTransaction if it FAILED.`);
+      }
+
+      const [scriptTxHash, idxStr] = monitor.currentUtxoRef.split('#');
+
+      const result = await chainAdapter.closeMonitor({
+        senderAddress: walletAddress,
+        oracleVkh: walletVkh,
+        seedTxHash: monitor.seedTxHash,
+        seedIdx: monitor.seedIdx,
+        scriptTxHash,
+        scriptOutputIndex: parseInt(idxStr, 10)
+      });
+
+      const signingReq = await chainAdapter.createSigningRequest(result.buildId);
+
+      await INSERT.into(ProofEvents).entries({
+        batch_ID: monitor.batch_ID,
+        eventType: 'MONITOR_CLOSE',
+        payloadDigest: monitor.commitRoot,
+        schema: 'TRACE_COLDCHAIN_CLOSE_V1',
+        signerVkh: walletVkh,
+        monitorId,
+        buildId: result.buildId,
+        signingRequestId: signingReq.signingRequestId,
+        status: 'PENDING'
+      });
+
+      return {
+        unsignedCbor: signingReq.unsignedTxCbor,
+        buildId: result.buildId,
+        signingRequestId: signingReq.signingRequestId,
+        txBodyHash: signingReq.txBodyHash
+      };
+    });
+
+    // -----------------------------------------------------------------------
     // VerifyBatch — public read-only verification of chain of custody
     // -----------------------------------------------------------------------
     this.on('VerifyBatch', async (req) => {
@@ -1094,14 +1435,30 @@ export default class TraceService extends cds.ApplicationService {
         status: a.status
       }));
 
+      // Cold-chain integrity summary, aggregated across the batch's monitors.
+      const monitors = await SELECT.from(ConditionMonitors)
+        .where({ batch_ID: asset.batch_ID })
+        .orderBy('createdAt asc');
+      const coldChain = {
+        monitored: monitors.length > 0,
+        breached: monitors.some((m: any) => !!m.breached),
+        monitorCount: monitors.length,
+        readingCount: monitors.reduce((sum: number, m: any) => sum + (m.readingCount ?? 0), 0),
+        breachCount: monitors.reduce((sum: number, m: any) => sum + (m.breachCount ?? 0), 0),
+        minMilliC: monitors[0]?.minMilliC ?? null,
+        maxMilliC: monitors[0]?.maxMilliC ?? null
+      };
+
       return {
         fingerprint: asset.fingerprint,
         currentHolder: asset.currentHolder,
         step: asset.step,
-        isValid: allConfirmed && !anyFailed,
+        // A cold-chain breach invalidates the batch for distribution purposes.
+        isValid: allConfirmed && !anyFailed && !coldChain.breached,
         onChainMatch: allVerified,
         steps,
-        documentAnchors
+        documentAnchors,
+        coldChain
       };
     });
 
@@ -1134,7 +1491,7 @@ export default class TraceService extends cds.ApplicationService {
     evt: any, txHash: string,
     run: (q: any) => Promise<any> = (q) => q
   ) {
-    const { Batches, Participants, OnChainAssets, DocumentAnchors, ManufacturerCounters } = cds.entities('trace');
+    const { Batches, Participants, OnChainAssets, DocumentAnchors, ManufacturerCounters, ConditionMonitors, ConditionReadings } = cds.entities('trace');
 
     if (evt.eventType === 'MINT') {
       const asset = await run(SELECT.one.from(OnChainAssets).where({ batch_ID: evt.batch_ID }));
@@ -1233,6 +1590,54 @@ export default class TraceService extends cds.ApplicationService {
       await run(UPDATE(DocumentAnchors)
         .set({ onChainTxHash: txHash, status: 'CONFIRMED' })
         .where({ buildId: evt.buildId }));
+    }
+
+    if (evt.eventType === 'SENSOR_ATTESTATION' && evt.monitorId) {
+      const monitor = await run(SELECT.one.from(ConditionMonitors).where({ ID: evt.monitorId }));
+      if (monitor) {
+        // The new monitor thread token (empty asset name) is the continuing
+        // output; locate it by asset unit (output index is not fixed).
+        let outputIdx: number | null = null;
+        if (monitor.policyId) {
+          outputIdx = await chainAdapter.getAssetOutputIndex(txHash, monitor.policyId, '');
+        }
+        if (outputIdx == null) {
+          throw new Error(
+            `SENSOR_ATTESTATION side-effect: monitor token ${monitor.policyId} not found in tx ${txHash} outputs (likely indexer lag) — retry on next poll`
+          );
+        }
+        // Reconcile from the uncommitted readings of this monitor (a single
+        // RecordReadings tx is ever in-flight, since each spends the prior UTxO).
+        const uncommitted = await run(SELECT.from(ConditionReadings)
+          .where({ monitor_ID: monitor.ID, committedTxHash: null }));
+        const breachDelta = uncommitted.filter((r: any) => !r.withinSpec).length;
+        await run(UPDATE(ConditionReadings)
+          .set({ committedTxHash: txHash })
+          .where({ monitor_ID: monitor.ID, committedTxHash: null }));
+        await run(UPDATE(ConditionMonitors).set({
+          readingCount: (monitor.readingCount ?? 0) + uncommitted.length,
+          breachCount: (monitor.breachCount ?? 0) + breachDelta,
+          commitRoot: evt.payloadDigest ?? monitor.commitRoot,
+          breached: !!monitor.breached || breachDelta > 0,
+          currentUtxoRef: txHash + '#' + outputIdx
+        }).where({ ID: monitor.ID }));
+
+        // Auto-quarantine: a spec breach holds the batch from further
+        // distribution. Latched — never auto-cleared; never overrides a recall.
+        if (breachDelta > 0 && monitor.batch_ID) {
+          const batch = await run(SELECT.one.from(Batches).where({ ID: monitor.batch_ID }));
+          if (batch && batch.status !== 'RECALLED' && batch.status !== 'QUARANTINE') {
+            await run(UPDATE(Batches).set({ status: 'QUARANTINE' }).where({ ID: monitor.batch_ID }));
+            LOG.warn(`Batch ${monitor.batch_ID} quarantined: cold-chain breach on monitor ${monitor.ID}`);
+          }
+        }
+      }
+    }
+
+    if (evt.eventType === 'MONITOR_CLOSE' && evt.monitorId) {
+      await run(UPDATE(ConditionMonitors)
+        .set({ currentUtxoRef: null, status: 'CLOSED' })
+        .where({ ID: evt.monitorId }));
     }
   }
 
@@ -1384,7 +1789,35 @@ export default class TraceService extends cds.ApplicationService {
           }
         }
 
-        LOG.info(`Polled ${submitted.length + submittedRegs.length + submittedCounters.length} submissions: ${confirmed} confirmed, ${failed} failed`);
+        // Poll SUBMITTED cold-chain monitor inits
+        const { ConditionMonitors: PollingMonitors } = cds.entities('trace');
+        const submittedMonitors = await run(
+          SELECT.from(PollingMonitors).where({ status: 'SUBMITTED' })
+        );
+        for (const m of submittedMonitors) {
+          if (!m.submissionId) continue;
+          const check = await chainAdapter.checkSubmissionStatus(m.submissionId);
+          if (check.status === 'confirmed') {
+            const monTxHash = check.txHash ?? null;
+            let monIdx: number | null = null;
+            if (monTxHash) {
+              monIdx = await chainAdapter.getAssetOutputIndex(monTxHash, m.policyId, '');
+            }
+            await run(UPDATE(PollingMonitors).set({
+              status: 'CONFIRMED',
+              currentUtxoRef: monTxHash ? `${monTxHash}#${monIdx ?? 0}` : null
+            }).where({ ID: m.ID }));
+            confirmed++;
+          } else if (check.status === 'failed') {
+            await run(UPDATE(PollingMonitors).set({
+              status: 'FAILED',
+              errorMessage: check.errorMessage
+            }).where({ ID: m.ID }));
+            failed++;
+          }
+        }
+
+        LOG.info(`Polled ${submitted.length + submittedRegs.length + submittedCounters.length + submittedMonitors.length} submissions: ${confirmed} confirmed, ${failed} failed`);
       } catch (err: any) {
         LOG.warn('Polling error:', err.message);
       }

@@ -1,14 +1,13 @@
 
 // TRACE Pharmaceutical Supply Chain Validator
-// Pebble port of contracts/validators/pharma_trace.ak
+// Pebble port of contracts-aiken/validators/pharma_trace.ak
 //
 // -----------------------------------------------------------------------------
 // Canonical ABI — both Aiken and Pebble MUST match these indices.
 // Mint:  InitCounter=0  MintBatch=1  Burn=2
 // Spend: Transfer=0     Deliver=1    IncrementCounter=2
 // Datum: ChainOfCustody=0  MintCounter=1
-// Pebble assigns Constr indices by method/variant declaration order
-// (Parser.js:250-291 → _deriveContractBody.js:325-326). Do NOT reorder.
+// Pebble assigns Constr indices by method/variant declaration order. Do NOT reorder.
 // -----------------------------------------------------------------------------
 
 struct ContractDatum {
@@ -18,10 +17,10 @@ struct ContractDatum {
         batch_id: bytes,
         step: int
     }
-    // manufacturer field is replicated so the spend endpoint can source it
-    // from the datum (Pebble Bug B — see docs/pebble-known-bugs.md).
+    // Counter datum carries only the running index. The manufacturer identity is
+    // the script parameter `this.manufacturer` (cryptographically bound via the
+    // parameterized script hash) — read it directly; no datum replication.
     MintCounter{
-        manufacturer: PubKeyHash,
         n: int
     }
 }
@@ -32,32 +31,28 @@ contract PharmaTrace {
 
     // Method declaration order MUST match Aiken MintAction constructors:
     //   InitCounter=0, MintBatch=1, Burn=2.
-    // Pebble compiler assigns redeemer Constr indices by source order
-    // (Parser.js:250-291 → _deriveContractBody.js:325-326).
+    // Pebble compiler assigns redeemer Constr indices by source order.
 
     mint initCounter() {
         const { tx, policy } = context;
 
         assert tx.inputs.some(({ ref }) => ref == this.seed);
 
-        const mintedAssets = tx.mint[policy];
-        assert mintedAssets.length() == 1;
-
-        const { key: tokenName, value: qty } = mintedAssets.head();
-        // empty bytes is an unique name
-        assert tokenName == #;
-        assert qty == 1;
+        // 0.3.x: `Value` is an opaque native (no `tx.mint[policy]` enumeration).
+        // Query the known empty counter name directly. Aiken still enforces
+        // "exactly one token under the policy"; this port checks only the named
+        // token (0.3.x `Value` has no enumeration, only `amountOf`).
+        assert tx.mint.amountOf( policy, # ) == 1;
 
         // Counter MUST be the first output. Change (and any other non-counter
         // outputs) are unrestricted and may follow. Matches Aiken behaviour.
-        const output = tx.outputs[0];
-
-        assert output.address.payment.hash() == policy;
-        const InlineDatum{ datum: MintCounter{ manufacturer: _m, n } as ContractDatum } = output.datum
+        const { address, value, datum } = tx.outputs[0];
+        assert address.payment.hash() == policy;
+        assert value.amountOf( policy, # ) == 1;
+        const InlineDatum{ datum: MintCounter{ n } as ContractDatum } = datum;
         assert n == 0;
-        // manufacturer (_m) is not cross-checked against `this.manufacturer` —
-        // Pebble Bug B blocks that, and security is anchored in seed control.
-        assert output.value.amountOf( policy, # ) == 1;
+        // Manufacturer identity is bound by the script parameter (seed control at
+        // init); the counter datum stores only the index.
     }
 
     // Mint: manufacturer mints exactly 1 NFT per batch
@@ -77,8 +72,12 @@ contract PharmaTrace {
     mint burn() {
         const { tx, policy } = context;
 
-        // Verify that any token under our policy has negative quantity (i.e. is being burned)
-        assert tx.mint[policy].every(({ value: qty }) => qty < 0);
+        // 0.3.x `Value` cannot be enumerated, so the exhaustive "every token
+        // under this policy is negative" check lives in Aiken (the on-chain
+        // authority). Here we conservatively forbid (re)minting the counter
+        // token via the burn path; batch-token burn quantities are gated
+        // on-chain by Aiken (0.3.x `Value` is not enumerable here).
+        assert tx.mint.amountOf( policy, # ) <= 0;
     }
 
     // Spend: transfer custody to next holder
@@ -138,70 +137,53 @@ contract PharmaTrace {
         assert tx.requiredSigners.includes(current_holder);
     }
 
-    // Spend the counter UTxO + mint k batch NFTs in one atomic transaction.
-    // Shape constrained by Pebble bugs A, B, C — see docs/pebble-known-bugs.md.
+    // Spend the counter UTxO + mint exactly ONE batch NFT in one atomic tx.
+    // Single-batch-per-tx (0.3.x): `Value` is no longer enumerable, so the old
+    // `tx.mint[ownHash]` loop over k batches is gone -- the batch name is fixed
+    // to int_to_bytes(n+1) and checked by `amountOf`. Output[0] = updated
+    // counter, Output[1] = the batch NFT. Mirrors Aiken can_increment_counter.
     spend incrementCounter( ownInputIdx: int ) {
         const {
             tx,
             optionalDatum: Some{
-                value: MintCounter{ manufacturer: mfr, n: prevCounter } as ContractDatum
+                value: MintCounter{ n: prevCounter } as ContractDatum
             },
             spendingRef
         } = context;
 
-        assert tx.requiredSigners.includes( mfr ); // Bug B: use datum `mfr`, not `this.manufacturer`.
+        assert tx.requiredSigners.includes( this.manufacturer );
 
         const { ref: ownInputRef, resolved: ownInput } = tx.inputs[ ownInputIdx ];
         assert spendingRef == ownInputRef;
         const ownHash = ownInput.address.payment.hash();
         assert ownInput.value.amountOf( ownHash, # ) == 1;
 
-        // Bug C: final counter computed functionally — `let` mutations don't
-        // survive the loop. Inside the loop, `let`s are only read.
-        const mints = tx.mint[ownHash];
-        const total = mints.length();
-        const nextCounter = prevCounter + total;
-        let remainingMints = mints;
-        let remainingOutputs = tx.outputs.tail(); // skip counter at [0]
+        const nextCounter = prevCounter + 1;
+        const batchName = nextCounter as bytes;
 
-        for( let i = 0; i < total; i = i + 1 ) {
-            const batchIdx = prevCounter + i + 1;
-            const batch_name = batchIdx as bytes;
+        // Exactly this one batch token minted (Aiken also enforces "no others").
+        assert tx.mint.amountOf( ownHash, batchName ) == 1;
 
-            const { key: tokenName, value: qty } = remainingMints.head();
-            assert tokenName == batch_name;
-            assert qty == 1;
-
-            // Bug A: intermediate const, then top-level destructure (direct
-            // destructure on `remainingOutputs.head()` still triggers the bug
-            // in multi-iteration loops).
-            const out = remainingOutputs.head();
-            const { address: outAddr, value: outValue, datum: outDatum } = out;
-            assert outAddr.payment.hash() == ownHash;
-            assert outValue.amountOf( ownHash, tokenName ) == 1;
-
-            const InlineDatum{ datum: ChainOfCustody{
-                manufacturer: batchMfr,
-                current_holder: batchHolder,
-                batch_id,
-                step
-            } as ContractDatum } = outDatum;
-
-            assert batchMfr == mfr;
-            assert batchHolder == mfr;
-            assert batch_id == batch_name;
-            assert step == 0;
-
-            remainingMints = remainingMints.tail();
-            remainingOutputs = remainingOutputs.tail();
-        }
-
-        // Counter output at [0] — Bug A: same top-level destructure pattern.
+        // Counter output at [0] -- token preserved, datum advanced to n+1.
         const { address: ncAddr, value: ncValue, datum: ncDatum } = tx.outputs[0];
         assert ncAddr.payment.hash() == ownHash;
         assert ncValue.amountOf( ownHash, # ) == 1;
-        const InlineDatum{ datum: MintCounter{ manufacturer: nextMfr, n: next } as ContractDatum } = ncDatum;
-        assert nextMfr == mfr;
+        const InlineDatum{ datum: MintCounter{ n: next } as ContractDatum } = ncDatum;
         assert next == nextCounter;
+
+        // Batch output at [1] -- NFT present, ChainOfCustody datum at step 0.
+        const { address: bAddr, value: bValue, datum: bDatum } = tx.outputs[1];
+        assert bAddr.payment.hash() == ownHash;
+        assert bValue.amountOf( ownHash, batchName ) == 1;
+        const InlineDatum{ datum: ChainOfCustody{
+            manufacturer: bMfr,
+            current_holder: bHolder,
+            batch_id: bId,
+            step: bStep
+        } as ContractDatum } = bDatum;
+        assert bMfr == this.manufacturer;
+        assert bHolder == this.manufacturer;
+        assert bId == batchName;
+        assert bStep == 0;
     }
 }

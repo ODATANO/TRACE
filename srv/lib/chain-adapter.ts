@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 
 const LOG = cds.log('chain-adapter');
+const { SELECT } = cds.ql;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -143,6 +144,60 @@ export interface TxStatus {
   slot: number | null;
 }
 
+// --- Cold-chain condition monitoring ---
+
+export interface InitMonitorParams {
+  senderAddress: string;
+  oracleVkh: string;
+  seedTxHash: string;
+  seedIdx: number;
+  batchIdHex: string;
+  minMilliC: number;
+  maxMilliC: number;
+  genesisRoot: string;   // 32-byte hex
+}
+
+export interface InitMonitorResult {
+  buildId: string;
+  unsignedCbor: string;
+  txBodyHash: string;
+  policyId: string;
+  scriptAddress: string;
+  seedTxHash: string;
+  seedIdx: number;
+}
+
+export interface RecordReadingsParams {
+  senderAddress: string;
+  oracleVkh: string;
+  seedTxHash: string;
+  seedIdx: number;
+  scriptTxHash: string;       // current monitor UTxO
+  scriptOutputIndex: number;
+  batchIdHex: string;         // immutable, re-emitted
+  minMilliC: number;
+  maxMilliC: number;
+  newReadingCount: number;
+  newBreachCount: number;
+  newCommitRoot: string;      // 32-byte hex
+  newBreached: boolean;
+}
+
+export interface CloseMonitorParams {
+  senderAddress: string;
+  oracleVkh: string;
+  seedTxHash: string;
+  seedIdx: number;
+  scriptTxHash: string;
+  scriptOutputIndex: number;
+}
+
+export interface ColdChainBuildResult {
+  buildId: string;
+  unsignedCbor: string;
+  txBodyHash: string;
+}
+
 // ---------------------------------------------------------------------------
 // Lazy CDS service connections
 // ---------------------------------------------------------------------------
@@ -174,7 +229,7 @@ let _plutusJson: PlutusJson | null = null;
 
 function getPlutusJson(): PlutusJson {
   if (!_plutusJson) {
-    const filePath = path.resolve(__dirname, '../../contracts/plutus.json');
+    const filePath = path.resolve(__dirname, '../../contracts/contracts-aiken/plutus.json');
     _plutusJson = JSON.parse(fs.readFileSync(filePath, 'utf8'));
   }
   return _plutusJson!;
@@ -256,10 +311,12 @@ export function intToBytes(n: number): string {
   return hex;
 }
 
-export function buildMintCounterDatum(manufacturerVkh: string, n: number): string {
+// Counter datum carries only the running index. Manufacturer identity is bound
+// by the script parameter (manufacturer VKH), not replicated in the datum.
+export function buildMintCounterDatum(n: number): string {
   return JSON.stringify({
     constructor: 1,
-    fields: [{ bytes: manufacturerVkh }, { int: n }]
+    fields: [{ int: n }]
   });
 }
 
@@ -286,6 +343,83 @@ export function buildScriptParams(manufacturerVkh: string, seedTxHash: string, s
     { bytes: manufacturerVkh },
     { constructor: 0, fields: [{ bytes: seedTxHash }, { int: seedIdx }] }
   ]);
+}
+
+// ---------------------------------------------------------------------------
+// Cold-chain (condition-monitoring) builders — cold_chain validator ABI.
+// Mint:  InitMonitor=0   BurnMonitor=1
+// Spend: RecordReadings=0 Close=1
+// Datum: MonitorState=0 { batch_id, min_milli_c, max_milli_c,
+//                         reading_count, breach_count, commit_root, breached }
+//        (oracle identity is the script param, not a datum field)
+// Script params: (oracle: VKH, seed: OutputReference).
+// ---------------------------------------------------------------------------
+
+export const COLD_CHAIN_MINT_TITLE = 'cold_chain.cold_chain.mint';
+export const COLD_CHAIN_SPEND_TITLE = 'cold_chain.cold_chain.spend';
+
+// Monitor thread NFT always has the empty asset name (like the counter).
+export const MONITOR_ASSET_NAME_HEX = '';
+
+// 32-byte commit root, hex (length checked == 32 bytes by the validator).
+export const COMMIT_ROOT_BYTES = 32;
+
+// scriptParamsJson for cold_chain: [oracle VKH, seed OutputReference].
+export function buildColdChainParams(oracleVkh: string, seedTxHash: string, seedIdx: number): string {
+  return JSON.stringify([
+    { bytes: oracleVkh },
+    { constructor: 0, fields: [{ bytes: seedTxHash }, { int: seedIdx }] }
+  ]);
+}
+
+// MonitorState datum — oracle identity is the script param (oracle VKH), not a
+// datum field; the datum stores only monitor state.
+export function buildMonitorStateDatum(
+  batchIdHex: string,
+  minMilliC: number,
+  maxMilliC: number,
+  readingCount: number,
+  breachCount: number,
+  commitRootHex: string,
+  breached: boolean
+): string {
+  return JSON.stringify({
+    constructor: 0,
+    fields: [
+      { bytes: batchIdHex },
+      { int: minMilliC },
+      { int: maxMilliC },
+      { int: readingCount },
+      { int: breachCount },
+      { bytes: commitRootHex },
+      { int: breached ? 1 : 0 }
+    ]
+  });
+}
+
+export function buildInitMonitorRedeemer(): string {
+  return JSON.stringify({ constructor: 0, fields: [] });
+}
+
+export function buildBurnMonitorRedeemer(): string {
+  return JSON.stringify({ constructor: 1, fields: [] });
+}
+
+// RecordReadings { input_idx, output_idx }. input_idx is resolved by ODATANO
+// from the __INPUT_IDX__ placeholder to the post-coin-selection position of the
+// monitor UTxO; output_idx = 0 (continuing output is the primary one).
+export function buildRecordReadingsRedeemer(scriptTxHash: string, scriptOutputIndex: number): string {
+  return JSON.stringify({
+    constructor: 0,
+    fields: [
+      { int: `__INPUT_IDX:${scriptTxHash}#${scriptOutputIndex}__` },
+      { int: 0 }
+    ]
+  });
+}
+
+export function buildCloseMonitorRedeemer(): string {
+  return JSON.stringify({ constructor: 1, fields: [] });
 }
 
 // ---------------------------------------------------------------------------
@@ -337,18 +471,19 @@ export async function getAssetOutputIndex(
   try {
     const srv = await oDataSrv();
     return await srvRun(srv, async (s: any) => {
-      const result = await s.send('GetTransactionByHash', { hash: txHash });
-      if (!result?.outputs) return null;
-      for (const out of result.outputs) {
-        const assets = out.assets ?? out.amount ?? [];
-        for (const a of assets) {
-          const unit = a.unit ?? ((a.policyId ?? '') + (a.assetName ?? ''));
-          if (unit === policyId + assetNameHex) {
-            return out.outputIndex ?? null;
-          }
-        }
-      }
-      return null;
+      // @odatano/core >= 1.9.5 no longer inlines outputs on
+      // GetTransactionByHash (the entity only carries hasOutputs). The asset
+      // placement lives in the TransactionOutputAssets projection, keyed by
+      // (output.tx.hash, output.outputIndex, unit) with unit = policyId +
+      // assetNameHex. GetTransactionByHash is still called first so the lazy
+      // indexer materialises the tx before the assets are read.
+      await s.send('GetTransactionByHash', { hash: txHash });
+      const rows: any[] = await s.run(
+        SELECT.from(s.entities.TransactionOutputAssets)
+          .where`output.tx.hash = ${txHash} and unit = ${policyId + assetNameHex}`
+      );
+      const idx = rows?.[0]?.output_outputIndex;
+      return typeof idx === 'number' ? idx : null;
     });
   } catch {
     return null;
@@ -403,7 +538,7 @@ export async function initCounter(params: InitCounterParams): Promise<InitCounte
   const srv = await txSrv();
   const validatorHex = getValidatorHex('pharma_trace.pharma_trace.mint');
 
-  const datum = buildMintCounterDatum(params.manufacturerVkh, 0);
+  const datum = buildMintCounterDatum(0);
   const redeemer = buildInitCounterRedeemer();
   const scriptParams = buildScriptParams(params.manufacturerVkh, params.seedTxHash, params.seedIdx);
 
@@ -434,13 +569,18 @@ export async function initCounter(params: InitCounterParams): Promise<InitCounte
 }
 
 /**
- * Mint a batch NFT — counter-pattern flow.
+ * Mint a batch NFT — counter-pattern flow (exactly ONE batch per tx).
  *
  * Atomically spends the current counter UTxO with IncrementCounter (Constr 2)
  * and mints the next batch NFT with MintBatch (Constr 1). The new counter
- * UTxO (with incremented n) is the primary output at the script address; the
- * batch NFT is an extra output also at the script address, carrying a
- * ChainOfCustody inline datum.
+ * UTxO (with incremented n) is the primary output at the script address
+ * (index 0); the batch NFT is the first extra output (index 1), also at the
+ * script address, carrying a ChainOfCustody inline datum.
+ *
+ * Single-batch-per-tx: the validators were reworked so the Pebble 0.3.x port
+ * compiles (Value is no longer enumerable). They now mint exactly one batch
+ * per tx and require the batch at output index 1 — which is where this builder
+ * already places it (one mint action, one extra output).
  *
  * On-chain asset name is `intToBytes(currentN + 1)` — enforced by the
  * validator. The caller's batchId string is a human-facing batch number
@@ -459,7 +599,7 @@ export async function mintBatchNft(params: MintParams): Promise<MintResult> {
     params.counter.seedIdx
   );
 
-  const newCounterDatum = buildMintCounterDatum(params.manufacturerVkh, nextN);
+  const newCounterDatum = buildMintCounterDatum(nextN);
   const batchDatum = buildChainOfCustodyDatum(
     params.manufacturerVkh,
     params.manufacturerVkh,
@@ -660,6 +800,117 @@ export async function deliverBatch(params: DeliverParams): Promise<TransferResul
     redeemerJson: redeemer,
     changeAddress: params.senderAddress,
     requiredSignersJson: JSON.stringify([params.currentHolderVkh])
+  });
+
+  return {
+    buildId: build.id,
+    unsignedCbor: build.unsignedTxCbor,
+    txBodyHash: build.txBodyHash
+  };
+}
+
+/**
+ * Initialise a cold-chain monitor thread (one-shot mint).
+ *
+ * Consumes `seedTxHash#seedIdx` as a forced input (→ unique policy), mints the
+ * monitor NFT (empty asset name) and locks it at the cold_chain script with a
+ * zeroed MonitorState datum (reading_count=0, breach_count=0, breached=0).
+ */
+export async function initMonitor(params: InitMonitorParams): Promise<InitMonitorResult> {
+  const srv = await txSrv();
+  const validatorHex = getValidatorHex(COLD_CHAIN_MINT_TITLE);
+
+  const datum = buildMonitorStateDatum(
+    params.batchIdHex, params.minMilliC, params.maxMilliC,
+    0, 0, params.genesisRoot, false
+  );
+  const redeemer = buildInitMonitorRedeemer();
+  const scriptParams = buildColdChainParams(params.oracleVkh, params.seedTxHash, params.seedIdx);
+
+  const build = await srv.send('BuildMintTransaction', {
+    senderAddress: params.senderAddress,
+    recipientAddress: params.senderAddress,
+    lovelaceAmount: '2500000',
+    mintActionsJson: JSON.stringify([{ assetUnit: MONITOR_ASSET_NAME_HEX, quantity: '1' }]),
+    mintingPolicyScript: validatorHex,
+    scriptParamsJson: scriptParams,
+    mintRedeemerJson: redeemer,
+    inlineDatumJson: datum,
+    lockOnScript: true,
+    forceInputsJson: JSON.stringify([{ txHash: params.seedTxHash, outputIndex: params.seedIdx }]),
+    changeAddress: params.senderAddress,
+    requiredSignersJson: JSON.stringify([params.oracleVkh])
+  });
+
+  return {
+    buildId: build.id,
+    unsignedCbor: build.unsignedTxCbor,
+    txBodyHash: build.txBodyHash,
+    policyId: build.scriptHash,
+    scriptAddress: build.scriptAddress,
+    seedTxHash: params.seedTxHash,
+    seedIdx: params.seedIdx
+  };
+}
+
+/**
+ * Append a batch of off-chain readings to the monitor thread (spend → re-lock).
+ *
+ * Spends the current monitor UTxO with RecordReadings and re-locks it at the
+ * script with an updated MonitorState (advanced counts, new commit root,
+ * latched breach flag). The oracle must sign.
+ */
+export async function recordReadings(params: RecordReadingsParams): Promise<ColdChainBuildResult> {
+  const srv = await txSrv();
+  const validatorHex = getValidatorHex(COLD_CHAIN_SPEND_TITLE);
+
+  const redeemer = buildRecordReadingsRedeemer(params.scriptTxHash, params.scriptOutputIndex);
+  const outputDatum = buildMonitorStateDatum(
+    params.batchIdHex, params.minMilliC, params.maxMilliC,
+    params.newReadingCount, params.newBreachCount, params.newCommitRoot, params.newBreached
+  );
+
+  const build = await srv.send('BuildPlutusSpendTransaction', {
+    senderAddress: params.senderAddress,
+    recipientAddress: params.senderAddress,
+    lovelaceAmount: '2500000',
+    validatorScript: validatorHex,
+    scriptParamsJson: buildColdChainParams(params.oracleVkh, params.seedTxHash, params.seedIdx),
+    scriptTxHash: params.scriptTxHash,
+    scriptOutputIndex: params.scriptOutputIndex,
+    redeemerJson: redeemer,
+    inlineDatumJson: outputDatum,
+    changeAddress: params.senderAddress,
+    requiredSignersJson: JSON.stringify([params.oracleVkh]),
+    lockOnScript: true
+  });
+
+  return {
+    buildId: build.id,
+    unsignedCbor: build.unsignedTxCbor,
+    txBodyHash: build.txBodyHash
+  };
+}
+
+/**
+ * Close a monitor thread (spend, NFT leaves the script to the oracle wallet).
+ * No continuing-output constraint; the oracle must sign.
+ */
+export async function closeMonitor(params: CloseMonitorParams): Promise<ColdChainBuildResult> {
+  const srv = await txSrv();
+  const validatorHex = getValidatorHex(COLD_CHAIN_SPEND_TITLE);
+
+  const build = await srv.send('BuildPlutusSpendTransaction', {
+    senderAddress: params.senderAddress,
+    recipientAddress: params.senderAddress,
+    lovelaceAmount: '2500000',
+    validatorScript: validatorHex,
+    scriptParamsJson: buildColdChainParams(params.oracleVkh, params.seedTxHash, params.seedIdx),
+    scriptTxHash: params.scriptTxHash,
+    scriptOutputIndex: params.scriptOutputIndex,
+    redeemerJson: buildCloseMonitorRedeemer(),
+    changeAddress: params.senderAddress,
+    requiredSignersJson: JSON.stringify([params.oracleVkh])
   });
 
   return {

@@ -23,7 +23,12 @@ import * as chainAdapter from '../../srv/lib/chain-adapter';
 // One fake per service. chain-adapter caches the first `connect.to` result per
 // service name, so sharing these across the whole file matches its behaviour.
 const fakeTxSrv:    any = { send: jest.fn(), tx: jest.fn((_: any, fn: any) => fn(fakeTxSrv)) };
-const fakeODataSrv: any = { send: jest.fn(), tx: jest.fn((_: any, fn: any) => fn(fakeODataSrv)) };
+const fakeODataSrv: any = {
+  send: jest.fn(),
+  run: jest.fn(),
+  entities: { TransactionOutputAssets: 'TransactionOutputAssets' },
+  tx: jest.fn((_: any, fn: any) => fn(fakeODataSrv)),
+};
 const fakeSignSrv:  any = { send: jest.fn(), tx: jest.fn((_: any, fn: any) => fn(fakeSignSrv)) };
 
 const origConnectTo = cds.connect.to.bind(cds.connect);
@@ -99,9 +104,10 @@ describe('initCounter', () => {
     expect(JSON.parse(payload.mintActionsJson)).toEqual([
       { assetUnit: '', quantity: '1' },
     ]);
-    // Inline datum is the MintCounter datum with n=0
+    // Inline datum is the MintCounter datum with n=0 (index only; manufacturer
+    // is the script param, no longer replicated in the datum)
     expect(JSON.parse(payload.inlineDatumJson)).toEqual({
-      constructor: 1, fields: [{ bytes: VKH_MFR }, { int: 0 }],
+      constructor: 1, fields: [{ int: 0 }],
     });
     // Script params: (mfrVkh, seed OutputReference).
     // `as any[]` because TS narrows the array element union from the literal
@@ -189,10 +195,10 @@ describe('mintBatchNft', () => {
     // requiredSigners = manufacturer
     expect(JSON.parse(payload.requiredSignersJson)).toEqual([VKH_MFR]);
 
-    // new counter datum at primary output has currentN+1
+    // new counter datum at primary output has currentN+1 (index only)
     expect(JSON.parse(payload.inlineDatumJson)).toEqual({
       constructor: 1,
-      fields: [{ bytes: VKH_MFR }, { int: 5 }],
+      fields: [{ int: 5 }],
     });
   });
 
@@ -502,43 +508,26 @@ describe('getScriptOutputIndex', () => {
 });
 
 describe('getAssetOutputIndex', () => {
-  it('matches an output by composed unit (policyId + assetName) via assets[]', async () => {
-    fakeODataSrv.send.mockResolvedValue({
-      outputs: [
-        { outputIndex: 0, assets: [{ unit: 'lovelace', quantity: '2000000' }] },
-        { outputIndex: 1, assets: [{ unit: POLICY + '05', quantity: '1' }] },
-      ],
-    });
+  // core >= 1.9.5: GetTransactionByHash no longer inlines outputs; the asset
+  // placement is read from the TransactionOutputAssets projection instead
+  // (unit = policyId + assetNameHex, row carries output_outputIndex).
+  it('resolves the output index from the TransactionOutputAssets projection', async () => {
+    fakeODataSrv.send.mockResolvedValue({});   // GetTransactionByHash materialises the tx
+    fakeODataSrv.run.mockResolvedValue([{ output_outputIndex: 1 }]);
     expect(await chainAdapter.getAssetOutputIndex('tx', POLICY, '05')).toBe(1);
+    const [arg] = fakeODataSrv.send.mock.calls[0];
+    expect(arg === 'GetTransactionByHash' || arg?.event === 'GetTransactionByHash').toBe(true);
   });
 
-  it('matches when assets use policyId + assetName fields instead of unit', async () => {
-    fakeODataSrv.send.mockResolvedValue({
-      outputs: [
-        { outputIndex: 7, assets: [{ policyId: POLICY, assetName: '05', quantity: '1' }] },
-      ],
-    });
-    expect(await chainAdapter.getAssetOutputIndex('tx', POLICY, '05')).toBe(7);
-  });
-
-  it('falls back to the `amount` array when `assets` is missing', async () => {
-    fakeODataSrv.send.mockResolvedValue({
-      outputs: [
-        { outputIndex: 3, amount: [{ unit: POLICY + '05', quantity: '1' }] },
-      ],
-    });
-    expect(await chainAdapter.getAssetOutputIndex('tx', POLICY, '05')).toBe(3);
-  });
-
-  it('returns null when no output contains the asset', async () => {
-    fakeODataSrv.send.mockResolvedValue({
-      outputs: [{ outputIndex: 0, assets: [{ unit: 'lovelace' }] }],
-    });
+  it('returns null when the projection has no row for the unit', async () => {
+    fakeODataSrv.send.mockResolvedValue({});
+    fakeODataSrv.run.mockResolvedValue([]);
     expect(await chainAdapter.getAssetOutputIndex('tx', POLICY, '05')).toBeNull();
   });
 
-  it('returns null when result has no outputs', async () => {
+  it('returns null when the projection read throws (tx not yet indexed)', async () => {
     fakeODataSrv.send.mockResolvedValue({});
+    fakeODataSrv.run.mockRejectedValue(new Error('not found'));
     expect(await chainAdapter.getAssetOutputIndex('tx', POLICY, '05')).toBeNull();
   });
 

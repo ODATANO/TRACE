@@ -24,7 +24,7 @@ entity Batches {
   product       : String(255);
   manufacturer  : Association to Participants;
   currentHolder : Association to Participants;
-  status        : String enum { DRAFT; MINTED; IN_TRANSIT; DELIVERED; RECALLED };
+  status        : String enum { DRAFT; MINTED; IN_TRANSIT; DELIVERED; RECALLED; QUARANTINE };
   originPayload : LargeString;
   onChainAsset  : Composition of one OnChainAssets on onChainAsset.batch = $self;
   proofEvents   : Composition of many ProofEvents on proofEvents.batch = $self;
@@ -50,11 +50,12 @@ entity OnChainAssets {
 entity ProofEvents {
   key ID           : UUID;
   batch            : Association to Batches;
-  eventType        : String enum { MINT; TRANSFER; DELIVER; VERIFY; RECALL; DOCUMENT_ANCHOR };
+  eventType        : String enum { MINT; TRANSFER; DELIVER; VERIFY; RECALL; DOCUMENT_ANCHOR; SENSOR_ATTESTATION; MONITOR_CLOSE };
   payloadDigest    : String(64);  // SHA-256 hex
   schema           : String(100); // schema identifier
   signerVkh        : String(56);
   targetParticipantId : String(36);  // target participant ID for TRANSFER retries
+  monitorId        : String(36);  // ConditionMonitors.ID for cold-chain events
   onChainTxHash    : String(64);
   status           : String enum { PENDING; SUBMITTED; CONFIRMED; FAILED } default 'PENDING';
   buildId          : String(36);  // ODATANO TransactionBuilds.id
@@ -83,6 +84,53 @@ entity ManufacturerCounters {
   errorMessage      : String(500);
   createdAt         : Timestamp @cds.on.insert: $now;
   modifiedAt        : Timestamp @cds.on.insert: $now @cds.on.update: $now;
+}
+
+// --- Cold-chain condition monitoring (cold_chain validator) ---
+
+// On-chain monitor "thread" — one per batch (or shipment leg). Mirrors the
+// counter pattern: a seed-unique policy mints a single empty-named thread NFT
+// locked at the cold_chain script, carrying a MonitorState datum that
+// accumulates tamper-evident sensor attestations.
+entity ConditionMonitors {
+  key ID            : UUID;
+  batch             : Association to Batches;
+  oracleVkh         : String(56);  // authorized sensor gateway / oracle vkh
+  batchIdHex        : String(128);  // on-chain batch id bound in the datum
+  policyId          : String(56);
+  scriptAddress     : String(120);
+  seedTxHash        : String(64);
+  seedIdx           : Integer;
+  minMilliC         : Integer;     // spec range, signed milli-degrees Celsius
+  maxMilliC         : Integer;
+  readingCount      : Integer default 0;
+  breachCount       : Integer default 0;
+  commitRoot        : String(64);  // 32-byte running commitment (hex)
+  breached          : Boolean default false;  // latched: false -> true, never back
+  currentUtxoRef    : String(80);  // txHash#idx of the monitor thread UTxO
+  status            : String enum { PENDING; SUBMITTED; CONFIRMED; FAILED; CLOSED } default 'PENDING';
+  buildId           : String(36);
+  signingRequestId  : String(36);
+  submissionId      : String(36);
+  errorMessage      : String(500);
+  createdAt         : Timestamp @cds.on.insert: $now;
+  modifiedAt        : Timestamp @cds.on.insert: $now @cds.on.update: $now;
+  readings          : Composition of many ConditionReadings on readings.monitor = $self;
+}
+
+// Off-chain sensor readings. Committed on-chain in batches via the monitor's
+// commitRoot (commit-on-chain / prove-off-chain): only the aggregate
+// (count + breach delta + new root) is enforced by the validator.
+entity ConditionReadings {
+  key ID         : UUID;
+  monitor        : Association to ConditionMonitors;
+  metric         : String enum { TEMPERATURE; HUMIDITY } default 'TEMPERATURE';
+  milliValue     : Integer;        // milli-units (milli-°C for TEMPERATURE)
+  recordedAt     : Timestamp;
+  withinSpec     : Boolean;
+  leafHash       : String(64);     // SHA-256 of the canonical reading
+  committedTxHash : String(64);    // RecordReadings tx that committed this reading
+  createdAt      : Timestamp @cds.on.insert: $now;
 }
 
 entity DocumentAnchors {

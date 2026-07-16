@@ -3,9 +3,12 @@
   "version": "1.0.0",
   "description": "Pharmaceutical Supply Chain Tracking on Cardano",
   "dependencies": {
-    "@odatano/core": "^1.9.1",
+    "@odatano/core": "^1.10.0",
     "@sap/cds": "^9",
     "express": "^4"
+  },
+  "engines": {
+    "node": ">=22"
   },
   "devDependencies": {
     "@cap-js/cds-test": "^0.4.1",
@@ -22,10 +25,11 @@
     "typescript": "^5.9.3"
   },
   "scripts": {
-    "start": "cds-serve",
+    "start": "cds-tsx serve",
     "cds:types": "cds-typer \"*\" --outputDirectory @cds-models",
     "typecheck": "tsc --noEmit",
     "db:deploy": "cds deploy",
+    "testnet:coldchain": "node scripts/testnet/coldchain-e2e.mjs",
     "pretest": "npm run cds:types && npm run db:deploy",
     "test": "jest --runInBand",
     "test:unit": "jest --runInBand --testPathPattern=test/unit",
@@ -50,8 +54,7 @@
       "odatano-core": {
         "network": "preview",
         "backends": [
-          "blockfrost",
-          "koios"
+          "blockfrost"
         ]
       }
     }

@@ -86,3 +86,21 @@ The verification result includes a **Verification Summary** showing the on-chain
 - **No wallet required**: Accessible to regulators, consumers, and auditors without blockchain tools
 
 ![Verify Batch](/assets/verify.png)
+
+## Cold-Chain Monitoring
+
+Beyond anchoring telemetry digests as metadata, TRACE can run a live **on-chain
+temperature monitor** per batch, enforced by the `cold_chain` Plutus validator
+(see [SMART_CONTRACT.md](SMART_CONTRACT.md)). The flow is API-driven (used e.g.
+by the EQUINOX agent and the `npm run testnet:coldchain` e2e script):
+
+1. **`InitColdChainMonitor`** locks the allowed range (`minMilliC`/`maxMilliC`)
+   as a datum at the script address.
+2. **`RecordSensorReadings`** commits batches of sensor readings. Out-of-range
+   values latch `breached` on-chain — the validator guarantees the flag can
+   never be cleared again and the excursion count only grows.
+3. **`CloseColdChainMonitor`** seals the monitor thread.
+
+Every step is a signed Plutus transaction (build → sign → `SubmitSigned`).
+The public **Verify** page / `VerifyBatch` includes the cold-chain result:
+`breached` state, excursion count, and number of committed readings.

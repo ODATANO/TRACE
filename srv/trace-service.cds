@@ -8,6 +8,21 @@ service TraceService @(path: '/odata/v4/trace', impl: './trace-service') {
   entity OnChainAssets        as projection on trace.OnChainAssets;
   entity DocumentAnchors      as projection on trace.DocumentAnchors;
   entity ManufacturerCounters as projection on trace.ManufacturerCounters;
+  entity ConditionMonitors    as projection on trace.ConditionMonitors {
+    *,
+    // Fiori criticality (1=Negative/red, 2=Critical, 3=Positive/green).
+    case when breached then 1 else 3 end             as breachCriticality : Integer,
+    case status
+      when 'CONFIRMED' then 3
+      when 'FAILED'    then 1
+      when 'CLOSED'    then 0
+      else 2
+    end                                              as statusCriticality : Integer
+  };
+  entity ConditionReadings    as projection on trace.ConditionReadings {
+    *,
+    case when withinSpec then 3 else 1 end           as specCriticality : Integer
+  };
 
   // --- Domain Actions ---
 
@@ -141,6 +156,50 @@ service TraceService @(path: '/odata/v4/trace', impl: './trace-service') {
     source          : String;
   };
 
+  // --- Cold-chain condition monitoring ---
+
+  // Bootstrap a cold-chain monitor thread for a batch (one-shot NFT mint).
+  // The connected wallet acts as the oracle. minMilliC/maxMilliC = spec range
+  // in signed milli-degrees Celsius (e.g. 2..8 C -> 2000..8000).
+  action   InitColdChainMonitor(batchId: UUID,
+                                minMilliC: Integer,
+                                maxMilliC: Integer,
+                                walletAddress: String,
+                                walletVkh: String)                                              returns {
+    monitorId        : UUID;
+    policyId         : String;
+    scriptAddress    : String;
+    unsignedCbor     : LargeString;
+    buildId          : String;
+    signingRequestId : String;
+    txBodyHash       : String;
+  };
+
+  // Commit a batch of off-chain sensor readings to a monitor thread.
+  // readingsJson = JSON array of { metric?, milliValue, recordedAt }.
+  action   RecordSensorReadings(monitorId: UUID,
+                                readingsJson: LargeString,
+                                walletAddress: String,
+                                walletVkh: String)                                              returns {
+    unsignedCbor     : LargeString;
+    buildId          : String;
+    signingRequestId : String;
+    txBodyHash       : String;
+    newReadingCount  : Integer;
+    newBreachCount   : Integer;
+    breached         : Boolean;
+  };
+
+  // Finalise a monitor thread (NFT leaves the script; no further readings).
+  action   CloseColdChainMonitor(monitorId: UUID,
+                                 walletAddress: String,
+                                 walletVkh: String)                                             returns {
+    unsignedCbor     : LargeString;
+    buildId          : String;
+    signingRequestId : String;
+    txBodyHash       : String;
+  };
+
   // Verify batch chain of custody (public, read-only)
   function VerifyBatch(batchIdOrFingerprint: String)                                            returns {
     fingerprint     : String;
@@ -162,6 +221,16 @@ service TraceService @(path: '/odata/v4/trace', impl: './trace-service') {
       visibility   : String;
       txHash       : String;
       status       : String;
+    };
+    // Cold-chain integrity summary (aggregated across the batch's monitors).
+    coldChain       : {
+      monitored    : Boolean;   // at least one monitor exists for this batch
+      breached     : Boolean;   // any monitor recorded a spec excursion
+      monitorCount : Integer;
+      readingCount : Integer;   // total committed readings across monitors
+      breachCount  : Integer;   // total out-of-spec readings
+      minMilliC    : Integer;   // spec range (from the first monitor)
+      maxMilliC    : Integer;
     };
   };
 }
